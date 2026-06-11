@@ -2,8 +2,13 @@
   "name": "@vigil/fixture-app",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/server.ts" },
-  "scripts": { "test": "vitest run", "start": "tsx src/server.ts" },
+  "exports": {
+    ".": {
+      "types": "./src/server.ts",
+      "default": "./src/server.ts"
+    }
+  },
+  "scripts": { "test": "vitest run", "start": "tsx src/server.ts", "typecheck": "tsc --noEmit" },
   "dependencies": { "express": "^4.19.0" },
   "devDependencies": {
     "@types/express": "^4.17.21",

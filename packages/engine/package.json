@@ -5,7 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "vigil": "tsx src/cli.ts",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "commander": "^12.1.0",
