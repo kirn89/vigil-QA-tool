@@ -29,11 +29,30 @@ Connect your app's URL. Every night — and any time you hit "Check now" after a
 
 **Explicit non-goals (v2 candidates, not v1):** GitHub/CI integration, pixel-level visual regression, mobile/cross-browser matrices, team seats, security scanning, API access, testing through real payment charges (we verify checkout up to the payment page only), SOC2/enterprise anything, native integrations with builders beyond fix-prompt text.
 
+**Permanent non-goals (not v2 either, by design):**
+
+- **Localhost / IDE dev servers.** The runner only tests URLs reachable over the internet. Builder previews (Lovable/V0/Bolt previews, Vercel/Netlify deploy previews) are hosted URLs and ARE supported — the pre-production workflow is "Check now against your preview, then publish." Tunneling into laptops or shipping a local CLI agent would break the zero-config promise and serve a different (more technical) buyer.
+- **Subjective UX critique** (confusing copy, design quality, layout taste). Unfalsifiable judgments generate false-alarm noise, and trust is the product. A separate one-off "UX review" report is a possible future product; it never enters the watch loop.
+- **Deep business-logic auditing** we can't observe in the UI. We verify stated expectations ("the total should read $108") but never claim to validate internal calculations.
+
+### 3.1 Coverage model: depth × breadth
+
+Vigil's claim to "comprehensive" QA is two lanes, mirroring real QA practice (deep on what matters, shallow sweep over everything else):
+
+| Lane | Coverage | Mechanism | Cost profile |
+|---|---|---|---|
+| **Flow watching** (deep, narrow) | Up to ~8 critical journeys per app: auto-discovered + user-described in plain English | Golden-path replay, LLM on deviation | LLM only on deviation |
+| **Site sweep** (shallow, broad) | Every reachable page, logged out and logged in | Crawler: dead links/404s, JS console errors, failed API calls, broken images, blank/error/unstyled pages, large load-time regressions | No LLM, near-free |
+
+The sweep is what covers "the rest of the app" outside mapped flows: it catches everything *objectively* broken anywhere, without judging anything subjective.
+
 ## 4. Product walkthrough
 
 ### 4.1 Connect (~2 minutes, zero code)
 
-User signs up, pastes their app URL, optionally provides a **test account** (email + password for a dummy login), and answers one question: "What's the one thing a user must always be able to do in your app?" We instruct users to provide throwaway test credentials, never real user accounts.
+User signs up, pastes their app's **production URL**, optionally adds a **preview URL** (Lovable/V0/Bolt preview, Vercel/Netlify deploy preview), optionally provides a **test account** (email + password for a dummy login), and answers one question: "What's the one thing a user must always be able to do in your app?" We instruct users to provide throwaway test credentials, never real user accounts.
+
+Environments: production is watched nightly; the preview URL is an on-demand target for pre-publish checks. Golden paths are recorded once and replay against either environment (same app, same flows).
 
 ### 4.2 Map
 
@@ -41,10 +60,16 @@ A browser agent explores the app (logged out and, if credentials were given, log
 
 For each confirmed flow, the mapper records a **golden path**: the ordered steps (navigate, click, fill, assert) with selectors, sample inputs, and expected outcomes, plus a screenshot per step.
 
+**Custom flows:** the user can also describe additional flows in plain English ("check that a user can export their report as a PDF — the download should contain the report title"). The mapper attempts to record a golden path from the description; if it can't complete the journey, it asks the user to clarify rather than guessing. Stated expectations become assertions. Cap: ~8 flows per app total in MVP.
+
 ### 4.3 Watch
 
-- **Nightly:** every confirmed flow runs once per night (staggered, per-app).
-- **"I just changed something" button:** runs all flows on demand, verdict in ~5 minutes. This button is the heart of the product.
+- **Nightly:** every confirmed flow runs once per night against production (staggered, per-app), plus the site sweep.
+- **"I just changed something" button:** runs all flows on demand against production **or the preview URL** (user picks; preview is the pre-publish workflow), verdict in ~5 minutes. This button is the heart of the product.
+
+### 4.3.1 Site sweep
+
+A crawler (no LLM) visits every reachable page — logged out and, with test credentials, logged in — and flags objective breakage outside mapped flows: dead links/404s, JavaScript console errors, failed API/network calls, broken images, blank or unstyled or error pages, and pages whose load time regressed dramatically (>3x their trailing median). Sweep findings appear in the same plain-English report, in a separate "rest of your app" section, and follow the same anti-noise rules (state-change alerts only). The sweep respects the same run-hygiene rules as flows (§6) and never clicks destructive-looking controls.
 
 ### 4.4 Verdict
 
@@ -92,6 +117,7 @@ The core cost/reliability insight: **deterministic replay first, LLM only on dev
 - **REPLAY mode (cheap, default):** nightly/on-demand runs execute the recorded golden path with plain Playwright — no LLM tokens at all when the app hasn't changed and steps pass.
 - **HEAL mode (LLM on deviation):** when a replay step fails, a cheaper model (Haiku-class) looks at the page and decides: (a) the UI changed but the flow still works — update the golden path (self-healing, silent); (b) the flow is genuinely broken — produce evidence; or (c) can't tell — UNSURE.
 - **DIAGNOSE mode:** on confirmed breakage, one Sonnet-class call writes the plain-English verdict and the fix prompt from the step trace + screenshots.
+- **SWEEP mode (no LLM):** the nightly crawler (§4.3.1). Pure Playwright + heuristics (HTTP status, console listeners, image natural-size checks, a "page looks rendered" heuristic: stylesheet loaded + non-trivial visible text). Sweep findings that persist across two consecutive sweeps get a DIAGNOSE-style plain-English line; one-off blips are suppressed.
 
 **Anti-false-alarm policy (trust is the product):**
 
@@ -104,10 +130,11 @@ The core cost/reliability insight: **deterministic replay first, LLM only on dev
 ## 7. Data model (Postgres)
 
 - `users` — auth identity, builder preference (Lovable/Bolt/Cursor/Replit/other).
-- `apps` — url, name, encrypted test credentials, status.
+- `apps` — production url, optional preview url, name, encrypted test credentials, status.
 - `flows` — app_id, name, status (proposed/confirmed/paused), golden path JSON, version.
 - `jobs` — type (map/run), app_id, state (queued/running/done/failed), priority (check-now > nightly).
-- `runs` — job_id, flow_id, verdict (pass/broken/unsure), step trace JSON, screenshot refs, duration, tokens spent.
+- `runs` — job_id, flow_id, environment (production/preview), verdict (pass/broken/unsure), step trace JSON, screenshot refs, duration, tokens spent.
+- `sweep_findings` — app_id, page url, kind (dead_link/console_error/failed_request/broken_image/unrendered/slow), first_seen, last_seen, status (open/resolved), evidence.
 - `verdict_events` — state transitions that triggered notifications (audit of what we told the user and when).
 - `subscriptions` — Stripe state mirror.
 
@@ -124,7 +151,7 @@ Screenshots go to Supabase Storage with 30-day retention.
 
 Per-customer monthly COGS at 2 apps × 5 flows × 30 nightly runs + ~20 check-nows:
 
-- Replay runs: $0 LLM (deterministic), VPS amortized.
+- Replay runs and site sweeps: $0 LLM (deterministic/heuristic), VPS amortized. Sweep adds crawl time, not tokens; cap at 200 pages/app per sweep.
 - HEAL/DIAGNOSE calls: estimated $0.50–$2.00/month at Haiku/Sonnet pricing assuming ~10% of runs deviate.
 - Infra: VPS €4/mo total (handles ~50 customers at nightly cadence before a second machine), Vercel/Supabase/Resend free tiers.
 
