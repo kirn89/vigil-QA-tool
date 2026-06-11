@@ -6,7 +6,9 @@
 
 **Architecture:** A pnpm monorepo with two packages: `@vigil/fixture-app` (a deliberately breakable demo site used as the test bed, per spec §12) and `@vigil/engine` (golden-path schema → Playwright replay executor → retry/verdict state machine → Postgres repositories → sweep crawler → commander CLI). No LLM code in this plan — MAP/HEAL/DIAGNOSE, the job queue, and the scheduler are Plan 1b; the web app is Plan 2. Spec: `docs/superpowers/specs/2026-06-11-vigil-app-watcher-design.md`.
 
-**Tech Stack:** Node 20+, TypeScript (ESM, strict), pnpm workspaces, Playwright (chromium), Zod, pg, commander, Vitest, Express (fixture only), Docker (local Postgres 16).
+**Tech Stack:** Node 20+, TypeScript (ESM, strict), pnpm workspaces, Playwright (chromium), Zod, pg, commander, Vitest, Express (fixture only), embedded-postgres (local Postgres 16 — see amendment below).
+
+> **Execution-time amendment (2026-06-11):** the dev machine has no Docker and no local Postgres, so local dev/test Postgres comes from the `embedded-postgres` npm package (real PG binaries, project-local, nothing installed system-wide) instead of the originally planned docker-compose. Task 6 reflects this. Production still targets Supabase (spec §5) — only local infrastructure changed.
 
 **Conventions used throughout:** all engine source under `packages/engine/src`, tests next to nothing — they live under `packages/engine/test`. Run tests from the repo root with `pnpm --filter @vigil/engine test -- <file>`. Every commit message ends with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` (omitted below for brevity — always append it).
 
@@ -18,7 +20,6 @@
 package.json                      # workspace root, private
 pnpm-workspace.yaml
 tsconfig.base.json
-docker-compose.yml                # local Postgres 16 on port 54329
 .env.example                      # DATABASE_URL, VIGIL_SECRET_KEY
 packages/
   fixture-app/
@@ -31,7 +32,9 @@ packages/
     tsconfig.json
     vitest.config.ts
     migrations/001_init.sql       # users, apps, flows, runs, sweeps, sweep_pages, sweep_findings
+    test/setup/global.ts          # vitest globalSetup: boots embedded Postgres on 54329
     src/
+      db/devServer.ts             # `pnpm db:dev` — persistent embedded Postgres for CLI use
       env.ts                      # env loading/validation
       flows/goldenPath.ts         # zod schema, types, {{placeholder}} interpolation
       replay/executor.ts          # performSteps + replayFlow (Playwright)
@@ -110,11 +113,12 @@ node_modules/
 dist/
 .env
 artifacts/
+.pgdata*
 ```
 
 `.env.example`:
 ```
-DATABASE_URL=postgres://vigil:vigil@localhost:54329/vigil
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/postgres
 VIGIL_SECRET_KEY=0000000000000000000000000000000000000000000000000000000000000000
 ```
 
@@ -883,28 +887,87 @@ git commit -m "feat: three-state verdict machine with retry-before-alert policy"
 ### Task 6: Postgres storage layer
 
 **Files:**
-- Create: `docker-compose.yml`, `packages/engine/migrations/001_init.sql`
+- Create: `packages/engine/migrations/001_init.sql`, `packages/engine/test/setup/global.ts`, `packages/engine/src/db/devServer.ts`
 - Create: `packages/engine/src/env.ts`, `src/db/pool.ts`, `src/db/migrate.ts`, `src/db/crypto.ts`, `src/db/appsRepo.ts`, `src/db/flowsRepo.ts`, `src/db/runsRepo.ts`
+- Modify: `packages/engine/package.json` (add `embedded-postgres` dev dep + `db:dev` script), `packages/engine/vitest.config.ts` (globalSetup)
 - Test: `packages/engine/test/db.test.ts`
 
-- [ ] **Step 1: Infrastructure files**
+- [ ] **Step 1: Infrastructure files (embedded Postgres — see amendment at top)**
 
-`docker-compose.yml` (repo root):
-```yaml
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: vigil
-      POSTGRES_PASSWORD: vigil
-      POSTGRES_DB: vigil
-    ports:
-      - "54329:5432"
-    volumes:
-      - vigil_pg:/var/lib/postgresql/data
-volumes:
-  vigil_pg:
+Add the dependency:
+```bash
+pnpm --filter @vigil/engine add -D embedded-postgres
 ```
+
+`packages/engine/test/setup/global.ts` (vitest globalSetup — boots a throwaway PG 16 on the fixed port that `.env.example`'s `DATABASE_URL` points at):
+```ts
+import EmbeddedPostgres from 'embedded-postgres';
+import { rm } from 'node:fs/promises';
+
+const DATA_DIR = '.pgdata-test';
+let pg: EmbeddedPostgres | undefined;
+
+export async function setup(): Promise<void> {
+  await rm(DATA_DIR, { recursive: true, force: true });
+  pg = new EmbeddedPostgres({
+    databaseDir: DATA_DIR,
+    user: 'postgres',
+    password: 'postgres',
+    port: 54329,
+    persistent: false,
+  });
+  await pg.initialise();
+  await pg.start();
+}
+
+export async function teardown(): Promise<void> {
+  await pg?.stop();
+  await rm(DATA_DIR, { recursive: true, force: true });
+}
+```
+
+Update `packages/engine/vitest.config.ts`:
+```ts
+import { defineConfig } from 'vitest/config';
+export default defineConfig({
+  test: {
+    testTimeout: 60_000, hookTimeout: 60_000, pool: 'forks', fileParallelism: false,
+    globalSetup: ['test/setup/global.ts'],
+  },
+});
+```
+
+`packages/engine/src/db/devServer.ts` (persistent local PG for CLI use during dogfooding — `pnpm db:dev` in one terminal, `pnpm vigil ...` in another; not used by tests):
+```ts
+import EmbeddedPostgres from 'embedded-postgres';
+import { existsSync } from 'node:fs';
+
+const DATA_DIR = '.pgdata';
+
+const pg = new EmbeddedPostgres({
+  databaseDir: DATA_DIR,
+  user: 'postgres',
+  password: 'postgres',
+  port: 54329,
+  persistent: true,
+});
+
+const firstRun = !existsSync(`${DATA_DIR}/PG_VERSION`);
+if (firstRun) await pg.initialise();
+await pg.start();
+console.log('Postgres running on 127.0.0.1:54329 (data: .pgdata). Ctrl-C to stop.');
+
+process.on('SIGINT', () => {
+  void pg.stop().then(() => process.exit(0));
+});
+```
+
+Add to `packages/engine/package.json` scripts:
+```json
+"db:dev": "tsx src/db/devServer.ts"
+```
+
+Note: tests and `db:dev` share port 54329 — don't run them simultaneously (acceptable for MVP; tests own the port in CI, the dev server owns it during dogfooding).
 
 `packages/engine/migrations/001_init.sql`:
 ```sql
@@ -1051,8 +1114,8 @@ describe('repositories', () => {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `docker compose up -d` then `pnpm --filter @vigil/engine test -- db`
-Expected: FAIL — modules not found.
+Run: `cp .env.example .env` (if not already done) then `pnpm --filter @vigil/engine test -- db`
+Expected: globalSetup boots embedded Postgres (first run downloads PG binaries), then FAIL — modules not found.
 
 - [ ] **Step 4: Implement env, pool, migrate, crypto, repos**
 
@@ -1256,19 +1319,17 @@ export async function latestVerdicts(appId: string): Promise<LatestVerdict[]> {
 }
 ```
 
-- [ ] **Step 5: Set up local env and run tests**
+- [ ] **Step 5: Run tests**
 
 ```bash
-cp .env.example .env
-docker compose up -d
 pnpm --filter @vigil/engine test -- db
 ```
-Expected: migration applies, then PASS (5 tests). (The placeholder all-zero key in `.env.example` is fine for local dev; production gets a generated one.)
+Expected: embedded Postgres boots, migration applies, then PASS (5 tests). (The placeholder all-zero key in `.env.example` is fine for local dev; production gets a generated one.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docker-compose.yml packages/engine .env.example
+git add packages/engine pnpm-lock.yaml
 git commit -m "feat: Postgres storage with encrypted credentials and verdict history"
 ```
 
