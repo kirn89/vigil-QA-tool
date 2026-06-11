@@ -61,7 +61,7 @@ export async function performSteps(
 
   for (const step of flow.steps) {
     const started = Date.now();
-    const screenshot = join(opts.artifactsDir, `${flow.name}-${step.id}.png`);
+    const screenshot = join(opts.artifactsDir, `${flow.name}-${opts.runId}-${step.id}.png`);
     try {
       await executeStep(page, step, opts, ctx, timeout);
       await page.screenshot({ path: screenshot }).catch(() => undefined);
