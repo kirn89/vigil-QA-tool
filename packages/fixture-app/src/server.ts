@@ -1,5 +1,6 @@
 import express from 'express';
 import type { Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 export type Breakable =
   | 'login-redirect' | 'nav-link' | 'about-image' | 'console-error' | 'items-create' | 'unstyled';
@@ -20,7 +21,12 @@ export function createFixtureApp() {
     return `<!doctype html><html><head><title>${title}</title>${style}</head><body>${body}</body></html>`;
   };
 
-  app.post('/__break', (req, res) => { broken.add(req.query.feature as Breakable); res.sendStatus(204); });
+  app.post('/__break', (req, res) => {
+    const feature = req.query['feature'];
+    if (typeof feature !== 'string') { res.sendStatus(400); return; }
+    broken.add(feature as Breakable);
+    res.sendStatus(204);
+  });
   app.post('/__reset', (_req, res) => { broken.clear(); res.sendStatus(204); });
   app.get('/__echo-ua', (req, res) => { res.json({ ua: req.headers['user-agent'] ?? '' }); });
 
@@ -98,6 +104,6 @@ export async function startFixture(port = 0): Promise<{ server: Server; url: str
 }
 
 // Allow `pnpm --filter @vigil/fixture-app start` for manual poking
-if (process.argv[1]?.endsWith('server.ts')) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   startFixture(4999).then(({ url }) => console.log(`fixture app on ${url}`));
 }
