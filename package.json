@@ -1,0 +1,8 @@
+{
+  "name": "vigil",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "pnpm -r test"
+  }
+}
