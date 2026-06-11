@@ -81,6 +81,8 @@ Three states per flow — never binary:
 
 Report language is plain English with evidence: "Login broke: after entering credentials, users land on a blank page instead of the dashboard. This started after your check today at 4:12pm." Each verdict links to step-by-step screenshots.
 
+**Surface hierarchy: dashboard-first.** All reports, verdict history, screenshots, fix prompts, and live Check-now progress live in the web app — the dashboard is the product surface. Email is not a report; it is a short push ping for the unattended lane only: state-change alerts ("login broke — see dashboard") and the weekly all-quiet digest. Both are optional and configurable in settings; the dashboard is always complete on its own.
+
 ### 4.5 Fix prompt
 
 Every BROKEN verdict ships with a paste-ready prompt targeted at the user's declared builder, e.g.:
@@ -152,7 +154,7 @@ Screenshots go to Supabase Storage with 30-day retention.
 Per-customer monthly COGS at 2 apps × 5 flows × 30 nightly runs + ~20 check-nows:
 
 - Replay runs and site sweeps: $0 LLM (deterministic/heuristic), VPS amortized. Sweep adds crawl time, not tokens; cap at 200 pages/app per sweep.
-- HEAL/DIAGNOSE calls: estimated $0.50–$2.00/month at Haiku/Sonnet pricing assuming ~10% of runs deviate.
+- HEAL/DIAGNOSE calls: estimated $0.50–$2.00/month at Haiku/Sonnet pricing assuming ~10% of nightly runs deviate. **Actively building customers deviate far more often** (every intentional UI edit triggers HEAL on affected flows, ~$0.05–0.30 per post-change Check-now): budget $3–8/month for heavy users. Self-healing means a deviation is paid for once, not nightly.
 - Infra: VPS €4/mo total (handles ~50 customers at nightly cadence before a second machine), Vercel/Supabase/Resend free tiers.
 
 COGS ≈ $1–3 vs $29–49 price → 90%+ gross margin. Verify real token costs against the claude-api reference during implementation, not from memory.
