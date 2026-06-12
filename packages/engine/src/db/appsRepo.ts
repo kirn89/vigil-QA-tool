@@ -20,16 +20,16 @@ export async function createApp(input: {
   userId: string; name: string; productionUrl: string;
   previewUrl: string | null; credentials: Credentials | null;
 }): Promise<AppRecord> {
-  const { rows } = await getPool().query(
+  const { rows } = await getPool().query<{ id: string }>(
     `insert into apps (user_id, name, production_url, preview_url, credentials_encrypted)
      values ($1, $2, $3, $4, $5) returning id`,
     [input.userId, input.name, input.productionUrl, input.previewUrl,
      input.credentials ? encryptJson(input.credentials) : null]);
-  return { id: rows[0]!.id as string, ...input };
+  return { id: rows[0]!.id, ...input };
 }
 
 export async function getAppByName(userId: string, name: string): Promise<AppRecord | null> {
-  const { rows } = await getPool().query(
+  const { rows } = await getPool().query<{ id: string; user_id: string; name: string; production_url: string; preview_url: string | null; credentials_encrypted: string | null }>(
     `select id, user_id, name, production_url, preview_url, credentials_encrypted
      from apps where user_id = $1 and name = $2`, [userId, name]);
   const r = rows[0];

@@ -6,7 +6,7 @@ export async function insertRun(input: {
   flowId: string; environment: 'production' | 'preview'; verdict: Verdict;
   failedStepId: string | null; attempts: FlowAttempt[]; durationMs: number;
 }): Promise<string> {
-  const { rows } = await getPool().query(
+  const { rows } = await getPool().query<{ id: string }>(
     `insert into runs (flow_id, environment, verdict, failed_step_id, attempts, duration_ms)
      values ($1, $2, $3, $4, $5, $6) returning id`,
     [input.flowId, input.environment, input.verdict, input.failedStepId,
@@ -17,7 +17,7 @@ export async function insertRun(input: {
 export interface LatestVerdict { flowName: string; verdict: Verdict; failedStepId: string | null; at: Date; }
 
 export async function latestVerdicts(appId: string): Promise<LatestVerdict[]> {
-  const { rows } = await getPool().query(
+  const { rows } = await getPool().query<{ flow_name: string; verdict: 'pass' | 'broken' | 'unsure'; failed_step_id: string | null; created_at: Date }>(
     `select distinct on (f.id) f.name as flow_name, r.verdict, r.failed_step_id, r.created_at
      from flows f join runs r on r.flow_id = f.id
      where f.app_id = $1
