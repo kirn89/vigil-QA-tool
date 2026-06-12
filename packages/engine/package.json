@@ -6,6 +6,7 @@
     "test": "vitest run",
     "vigil": "tsx src/cli.ts",
     "migrate": "tsx src/db/migrate.ts",
+    "db:dev": "tsx src/db/devServer.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "@types/node": "^20.14.0",
     "@types/pg": "^8.11.6",
     "@vigil/fixture-app": "workspace:*",
+    "embedded-postgres": "18.4.0-beta.17",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0",
     "vitest": "^2.1.0"
