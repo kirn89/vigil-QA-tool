@@ -46,6 +46,17 @@ Vigil's claim to "comprehensive" QA is two lanes, mirroring real QA practice (de
 
 The sweep is what covers "the rest of the app" outside mapped flows: it catches everything *objectively* broken anywhere, without judging anything subjective.
 
+### 3.2 Scope doctrine: primitives, not apps
+
+There are millions of distinct apps; Vigil never scopes against apps. It scopes against the **action vocabulary** of golden paths (navigate, click, fill, assert-text, assert-url; `upload` and `select` are known next additions). Every web app is a sentence written in this small alphabet, and the browser normalizes everything to DOM. Consequences:
+
+- **Coverage grows by primitives, not integrations.** Each new action kind unlocks a class of apps, not one app. The decision rule for any unsupported need: *is it a primitive (reusable across thousands of apps) or app-specific semantics?* Primitives are queued by demand frequency; app semantics get a polite no.
+- **Novelty is absorbed at map time, not product time.** The MAP agent reads whatever app is in front of it; replay is app-agnostic. Unknown apps are a per-app one-time cost, never a per-product scoping problem.
+- **Three rings:** (1) supported now — anything expressible in the vocabulary against a reachable URL with a password-login test account; (2) supported on repeated demand — new primitives, test-inbox for magic-link/OTP auth, iframe handling; (3) permanently out — apps that actively resist automation (captcha/bot-walls: a values conflict, not an engineering gap), output-quality judgment, live multi-user simulation (standing fixture state covers the need — e.g. a pre-connected pair of sealed test accounts for two-sided features).
+- **Refuse at onboarding, before money.** When an app needs ring-3 (or not-yet-built ring-2) capabilities, detection happens at connect/map time and Vigil says "can't watch this yet." Losing one exotic customer is cheap; a false promise costs trust, which is the product. The market's homogeneity (a handful of builders generating the same UI patterns on the same stacks) means the boring majority is far more than the ~2,000 customers $1M ARR requires.
+
+**Multi-user and stateful apps (dogfooding-derived patterns):** two-sided features are tested with **sealed test pairs** — two standing test accounts that interact only with each other (ideally flagged `is_test` and hidden from real users); cross-user state (an accepted connection) is set up once as fixture state, then single-session flows exercise it nightly. Repeatable funnels (signup/onboarding) use `{{unique}}` synthetic accounts with an app-side purge. AI-output apps are asserted **structurally** (the draft container rendered, the download button appeared), never on content quality.
+
 ## 4. Product walkthrough
 
 ### 4.1 Connect (~2 minutes, zero code)
