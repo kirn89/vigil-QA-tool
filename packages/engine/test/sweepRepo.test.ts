@@ -71,4 +71,16 @@ describe('sweep persistence', () => {
     await recordSweep(appId, withDeadLink); // count=2, open → confirmed
     expect(await confirmedFindings(appId)).toHaveLength(1);
   });
+
+  it('duplicate findings within one sweep do not fake a two-sweep confirmation', async () => {
+    const dup: SweepResult = {
+      pages: clean.pages,
+      findings: [
+        { pageUrl: 'http://x.test/gone', kind: 'dead_link', evidence: 'HTTP 404' },
+        { pageUrl: 'http://x.test/gone', kind: 'dead_link', evidence: 'HTTP 404' },
+      ],
+    };
+    await recordSweep(appId, dup);
+    expect(await confirmedFindings(appId)).toEqual([]);
+  });
 });

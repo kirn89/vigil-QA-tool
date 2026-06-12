@@ -50,9 +50,13 @@ export async function recordSweep(appId: string, result: SweepResult): Promise<s
     }
   }
 
+  // Dedupe by fingerprint: a finding repeated within ONE sweep must count once,
+  // or the on-conflict increment would fake a two-sweep confirmation (spec §6)
+  const unique = new Map<string, SweepFinding>();
+  for (const f of findings) unique.set(fingerprint(f), f);
+
   const seen: string[] = [];
-  for (const f of findings) {
-    const fp = fingerprint(f);
+  for (const [fp, f] of unique) {
     seen.push(fp);
     await pool.query(
       `insert into sweep_findings (app_id, page_url, kind, evidence, fingerprint)

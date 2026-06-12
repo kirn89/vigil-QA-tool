@@ -80,7 +80,7 @@ export async function cmdCheck(appName: string, opts: CheckOptions = {}): Promis
 export async function cmdSweep(appName: string): Promise<void> {
   const app = await requireApp(appName);
   const flows = await listConfirmedFlows(app.id);
-  const loginFlow = flows.find((f) => f.goldenPath.name === 'login')?.goldenPath;
+  const loginFlow = flows.find((f) => f.goldenPath.name.toLowerCase() === 'login')?.goldenPath;
   const result = await sweepSite({
     baseUrl: app.productionUrl, maxPages: 200,
     loginFlow, credentials: app.credentials ?? undefined,
@@ -113,8 +113,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (o) => { await cmdAppAdd({ name: o.name, url: o.url, previewUrl: o.previewUrl, loginEmail: o.loginEmail, loginPassword: o.loginPassword }); });
   program.command('flow:add').argument('<app>').argument('<file>')
     .action(async (app, file) => { await cmdFlowAdd(app, file); });
-  program.command('check').argument('<app>').option('--preview')
-    .action(async (app, o) => { const { exitCode } = await cmdCheck(app, { preview: o.preview }); process.exitCode = exitCode; });
+  program.command('check').argument('<app>')
+    .option('--preview')
+    .option('--retries <n>', 'max attempts per flow', '3')
+    .option('--step-timeout <ms>', 'per-step timeout in ms', '15000')
+    .action(async (app, o) => {
+      const { exitCode } = await cmdCheck(app, {
+        preview: o.preview, retries: Number(o.retries), stepTimeoutMs: Number(o.stepTimeout),
+      });
+      process.exitCode = exitCode;
+    });
   program.command('sweep').argument('<app>')
     .action(async (app) => { await cmdSweep(app); });
   program.command('report').argument('<app>')

@@ -19,6 +19,29 @@ export interface SweepOptions {
   pageTimeoutMs?: number;
 }
 
+const UNSAFE_WORDS = ['logout', 'log-out', 'signout', 'sign-out', 'delete', 'remove', 'destroy', 'archive', 'cancel', 'unsubscribe'];
+
+/** True when a link looks like it triggers a session-ending or destructive action.
+ *  The sweep never follows these: GET endpoints with side effects are common in
+ *  vibe-coded apps, and following /logout would silently turn the rest of a
+ *  logged-in crawl into a logged-out one (spec §4.3.1: sweep is read-only). */
+export function isUnsafeHref(href: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(href, 'http://placeholder.local');
+  } catch {
+    return true; // unparseable → don't follow
+  }
+  const segments = u.pathname.toLowerCase().split('/').filter(Boolean);
+  const matchesWord = (s: string) =>
+    UNSAFE_WORDS.some((w) => s === w || s.startsWith(`${w}-`) || s.startsWith(`${w}_`));
+  if (segments.some(matchesWord)) return true;
+  for (const [k, v] of u.searchParams) {
+    if (UNSAFE_WORDS.includes(k.toLowerCase()) || UNSAFE_WORDS.includes(v.toLowerCase())) return true;
+  }
+  return false;
+}
+
 function normalize(href: string, base: string): string | null {
   try {
     const u = new URL(href, base);
@@ -107,7 +130,7 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
           const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.getAttribute('href')!));
           for (const href of hrefs) {
             const n = normalize(href, current);
-            if (n && !visited.has(n)) queue.push(n);
+            if (n && !visited.has(n) && !isUnsafeHref(n)) queue.push(n);
           }
         }
       } catch (err) {

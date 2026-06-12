@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import { startFixture } from '@vigil/fixture-app';
-import { sweepSite } from '../src/sweep/crawler.js';
+import { isUnsafeHref, sweepSite } from '../src/sweep/crawler.js';
 
 let server: Server;
 let url: string;
@@ -9,6 +9,19 @@ let url: string;
 beforeAll(async () => ({ server, url } = await startFixture()));
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(async () => { await fetch(`${url}/__reset`, { method: 'POST' }); });
+
+describe('isUnsafeHref', () => {
+  it('blocks logout/signout/destructive-looking links', () => {
+    for (const href of ['/logout', '/auth/sign-out', '/signout?next=/', '/items/3/delete', '/remove?id=9', '/account/destroy', '/posts/7?action=delete']) {
+      expect(isUnsafeHref(href), href).toBe(true);
+    }
+  });
+  it('allows normal links', () => {
+    for (const href of ['/about', '/items', '/blog/deleted-scenes', '/sign-in', '/login', '/archives-of-history']) {
+      expect(isUnsafeHref(href), href).toBe(false);
+    }
+  });
+});
 
 describe('sweepSite', () => {
   it('visits same-origin pages and reports none broken on a healthy site', async () => {
