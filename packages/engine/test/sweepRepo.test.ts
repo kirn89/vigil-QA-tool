@@ -63,4 +63,12 @@ describe('sweep persistence', () => {
     await recordSweep(appId, fast(2500));
     expect((await confirmedFindings(appId)).filter((f) => f.kind === 'slow')).toEqual([]);
   });
+
+  it('reappeared finding becomes confirmed after 2 consecutive post-blip sweeps', async () => {
+    await recordSweep(appId, withDeadLink); // count=1, open
+    await recordSweep(appId, clean);        // resolved
+    await recordSweep(appId, withDeadLink); // count=1, open (restart)
+    await recordSweep(appId, withDeadLink); // count=2, open → confirmed
+    expect(await confirmedFindings(appId)).toHaveLength(1);
+  });
 });

@@ -12,6 +12,7 @@ function fingerprint(f: SweepFinding): string {
   return createHash('sha256').update(`${f.kind}|${f.pageUrl}|${evidenceKey}`).digest('hex');
 }
 
+// Returns the upper-middle element for even-length arrays (slightly conservative — raises the slow threshold)
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
