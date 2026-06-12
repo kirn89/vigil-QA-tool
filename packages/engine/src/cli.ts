@@ -120,5 +120,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   program.command('report').argument('<app>')
     .action(async (app) => { await cmdReport(app); });
   program.hook('postAction', async () => { await closePool(); });
-  program.parseAsync().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(2); });
+  program.exitOverride();
+  program.parseAsync().catch((e: unknown) => {
+    const exitCode = (e as { exitCode?: number }).exitCode;
+    if (exitCode === 0) { process.exit(0); } // --help / --version
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(2);
+  });
 }
