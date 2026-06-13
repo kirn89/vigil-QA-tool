@@ -126,7 +126,7 @@ Four components, deliberately boring:
 
 The core cost/reliability insight: **deterministic replay first, LLM only on deviation.**
 
-- **MAP mode (expensive, rare):** LLM-driven exploration (Claude Sonnet-class) to discover flows and record golden paths. Runs at onboarding and on explicit "re-map" only.
+- **MAP mode (expensive, rare):** LLM-driven exploration to discover flows and record golden paths. Runs at onboarding and on explicit "re-map" only. Design in §6.1.
 - **REPLAY mode (cheap, default):** nightly/on-demand runs execute the recorded golden path with plain Playwright — no LLM tokens at all when the app hasn't changed and steps pass.
 - **HEAL mode (LLM on deviation):** when a replay step fails, a cheaper model (Haiku-class) looks at the page and decides: (a) the UI changed but the flow still works — update the golden path (self-healing, silent); (b) the flow is genuinely broken — produce evidence; or (c) can't tell — UNSURE.
 - **DIAGNOSE mode:** on confirmed breakage, one Sonnet-class call writes the plain-English verdict and the fix prompt from the step trace + screenshots.
@@ -139,6 +139,25 @@ The core cost/reliability insight: **deterministic replay first, LLM only on dev
 - Verdict emails are sent on state *changes* (something broke / something recovered) plus a weekly "all quiet, N runs passed" digest. No daily spam.
 
 **Run hygiene:** every run tags requests with a `Vigil-Check` user agent; test inputs use clearly-marked synthetic data (e.g. `vigil-test+<id>@...`); destructive-looking actions (delete buttons, payments past the checkout page) are never executed in v1 — flows that require them stop at the boundary and assert the page state instead.
+
+### 6.1 MAP design — the LLM mapper (Plan 1b)
+
+This is what makes "scope all the critical flows" real, replacing hand-written golden paths. **It is the answer to the dogfooding finding that 3 hand-picked flows is not a product.**
+
+- **Surface:** Claude API + tool use (`@anthropic-ai/sdk`), manual agentic loop, with Playwright running on our own runner (NOT Managed Agents — we host the browser compute). The loop runs until the model emits its proposals (`end_turn`).
+- **Model:** `claude-sonnet-4-6` ($3/$15 per 1M) for exploration — strong enough to read an accessibility tree and reason about journeys, ⅓ the cost of Opus. (HEAL stays on `claude-haiku-4-5`; DIAGNOSE may use Sonnet.)
+- **Tool surface given to Claude:** thin wrappers over Playwright — `navigate(path)`, `snapshot()` (returns the accessibility tree + key element refs, *not* raw HTML — far fewer tokens), `click(ref)`, `fill(ref,value)`, `select(ref,value)`, `read_state()` (url + visible headings). The agent explores logged-out and, with the test account, logged-in. Destructive-looking controls (§6 run hygiene, `isUnsafeHref` patterns) are withheld from the tool surface so the agent *cannot* fire them.
+- **Output:** the agent proposes up to ~8 critical journeys as **`GoldenPath` objects validated by the existing `goldenPathSchema`** (structured output / strict tool). They are persisted with `status='proposed'`; the user confirms/edits before any become watched (§4.2 confirmation gate makes discovery mistakes harmless).
+- **Cost control:** a step cap and a token `task_budget` per map run; selectors recorded as stable CSS so REPLAY needs zero further LLM calls. Estimated $0.20–$1.00 per app mapped (one-time at onboarding) — see §9.
+- **The bet:** novelty is absorbed *once*, at map time, by the model reading whatever app is in front of it; deterministic REPLAY (app-agnostic) carries every nightly run after. Unknown apps become a per-app one-time cost, never a per-product scoping problem (§3.2).
+
+### 6.2 Coverage gaps surfaced by dogfooding (2026-06-13) — Plan 1b/1c work
+
+The first real run (settlenepal, scholarai) exposed three concrete breadth gaps, distinct from the "every flow is impossible" reframing (§3.2):
+
+1. **Sweep starts from the marketing root even when logged in.** On single-page-app tools (e.g. scholarai `/app`), the marketing homepage links only to `/auth/*` + legal pages, so the crawl never reaches the product. **Fix:** when credentials exist, seed the crawl from the post-login landing URL captured during the login flow, not just the root. (Small, near-term.)
+2. **Sweep is blind to in-page feature states.** A link-crawler covers linked *pages*; single-URL tools expose features as click-driven states (modals, wizards, the upload/question panel). These are covered by *flows* (depth), not the sweep (breadth) — so the answer is more **mapped flows from MAP**, plus optional LLM-assisted reachable-view enumeration later.
+3. **Metered test accounts can't sustain nightly watching.** ScholarAI's free tier caps at 3 docs / 2 questions, so resource-consuming flows are "run-once to prove," not nightly. **Product requirement:** an "unmetered/elevated test account" story for usage-limited apps, surfaced at onboarding.
 
 ## 7. Data model (Postgres)
 
@@ -164,6 +183,7 @@ Screenshots go to Supabase Storage with 30-day retention.
 
 Per-customer monthly COGS at 2 apps × 5 flows × 30 nightly runs + ~20 check-nows:
 
+- MAP (auto-mapping, §6.1): one-time at onboarding (+ rare re-maps). Sonnet at $3/$15 per 1M; an exploration of ~8 flows over an accessibility-tree tool surface is estimated $0.20–$1.00 per app. Amortized to ~zero per month.
 - Replay runs and site sweeps: $0 LLM (deterministic/heuristic), VPS amortized. Sweep adds crawl time, not tokens; cap at 200 pages/app per sweep.
 - HEAL/DIAGNOSE calls: estimated $0.50–$2.00/month at Haiku/Sonnet pricing assuming ~10% of nightly runs deviate. **Actively building customers deviate far more often** (every intentional UI edit triggers HEAL on affected flows, ~$0.05–0.30 per post-change Check-now): budget $3–8/month for heavy users. Self-healing means a deviation is paid for once, not nightly.
 - Infra: VPS €4/mo total (handles ~50 customers at nightly cadence before a second machine), Vercel/Supabase/Resend free tiers.
