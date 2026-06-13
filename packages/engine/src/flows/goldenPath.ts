@@ -4,6 +4,8 @@ export const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('goto'), path: z.string().startsWith('/') }),
   z.object({ kind: z.literal('click'), selector: z.string().min(1), description: z.string() }),
   z.object({ kind: z.literal('fill'), selector: z.string().min(1), value: z.string(), description: z.string() }),
+  z.object({ kind: z.literal('select'), selector: z.string().min(1), value: z.string().min(1), description: z.string() }),
+  z.object({ kind: z.literal('upload'), selector: z.string().min(1), path: z.string().min(1), description: z.string() }),
   z.object({ kind: z.literal('expect_text'), text: z.string().min(1) }),
   z.object({ kind: z.literal('expect_url'), pattern: z.string().min(1) }),
 ]);

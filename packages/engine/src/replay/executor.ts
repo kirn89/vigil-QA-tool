@@ -41,6 +41,13 @@ async function executeStep(page: Page, step: Step, opts: ReplayOptions, ctx: Int
     case 'fill':
       await page.locator(a.selector).first().fill(interpolate(a.value, ctx), { timeout });
       break;
+    case 'select':
+      // Playwright matches the string against the option's value, label, or text content
+      await page.locator(a.selector).first().selectOption(interpolate(a.value, ctx), { timeout });
+      break;
+    case 'upload':
+      await page.locator(a.selector).first().setInputFiles(a.path, { timeout });
+      break;
     case 'expect_text':
       await page.getByText(a.text).first().waitFor({ state: 'visible', timeout });
       break;

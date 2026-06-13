@@ -28,6 +28,26 @@ describe('goldenPathSchema', () => {
     const big = { ...loginFlow, steps: Array.from({ length: 31 }, (_, i) => ({ id: `s${i}`, action: { kind: 'goto', path: '/' } })) };
     expect(() => goldenPathSchema.parse(big)).toThrow();
   });
+
+  it('parses select and upload actions', () => {
+    const flow = {
+      name: 'onboarding',
+      steps: [
+        { id: 's1', action: { kind: 'select', selector: 'select[name=country]', value: 'IN', description: 'country dropdown' } },
+        { id: 's2', action: { kind: 'upload', selector: 'input[type=file]', path: '/tmp/doc.txt', description: 'document upload' } },
+      ],
+    };
+    const parsed = goldenPathSchema.parse(flow);
+    expect(parsed.steps[0]!.action.kind).toBe('select');
+    expect(parsed.steps[1]!.action.kind).toBe('upload');
+  });
+
+  it('rejects a select missing its value and an upload missing its path', () => {
+    const noValue = { name: 'x', steps: [{ id: 's1', action: { kind: 'select', selector: 's', description: 'd' } }] };
+    const noPath = { name: 'x', steps: [{ id: 's1', action: { kind: 'upload', selector: 's', description: 'd' } }] };
+    expect(() => goldenPathSchema.parse(noValue)).toThrow();
+    expect(() => goldenPathSchema.parse(noPath)).toThrow();
+  });
 });
 
 describe('interpolate', () => {

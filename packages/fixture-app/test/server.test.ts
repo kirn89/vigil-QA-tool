@@ -56,4 +56,12 @@ describe('fixture app', () => {
     });
     expect(res.status).toBe(500);
   });
+
+  it('serves an onboarding page with a native select and a file input', async () => {
+    const html = await (await fetch(`${url}/onboarding`)).text();
+    expect(html).toContain('<select name="country"');
+    expect(html).toContain('<option value="IN">India</option>');
+    expect(html).toContain('<input type="file" name="document"');
+    expect(html).toContain('id="result"');
+  });
 });

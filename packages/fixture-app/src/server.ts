@@ -87,6 +87,38 @@ export function createFixtureApp() {
     res.send(page('About', `<h1>About</h1><img src="${img}" alt="team"><p>We are a demo company that exists to be tested.</p>`));
   });
 
+  // Onboarding form exercising the `select` and `upload` primitives. Client-side JS
+  // reflects both choices into #result so a flow can assert without server-side
+  // multipart parsing (the upload primitive only needs the file set on the input).
+  app.get('/onboarding', (_req, res) =>
+    res.send(page('Onboarding', `<h1>Create your profile</h1>
+      <form>
+        <label>Country
+          <select name="country" id="country">
+            <option value="">Select…</option>
+            <option value="IN">India</option>
+            <option value="US">USA</option>
+            <option value="UK">UK</option>
+          </select>
+        </label>
+        <label>Document
+          <input type="file" name="document" id="document">
+        </label>
+        <output id="result">nothing selected yet</output>
+      </form>
+      <script>
+        const c = document.getElementById('country');
+        const d = document.getElementById('document');
+        const r = document.getElementById('result');
+        function update() {
+          const country = c.value ? c.options[c.selectedIndex].text : 'none';
+          const file = d.files && d.files[0] ? d.files[0].name : 'none';
+          r.textContent = 'country=' + country + ' file=' + file;
+        }
+        c.addEventListener('change', update);
+        d.addEventListener('change', update);
+      </script>`)));
+
   app.get('/ok.png', (_req, res) => { res.type('png').send(OK_PNG); });
 
   return app;

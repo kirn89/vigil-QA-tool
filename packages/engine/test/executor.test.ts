@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -75,5 +75,22 @@ describe('replayFlow', () => {
     });
     const attempt = await replayFlow(homeFlow, { baseUrl: url, artifactsDir, runId: 't4' });
     expect(attempt.consoleErrors.some((e) => e.includes('boom from fixture'))).toBe(true);
+  });
+
+  it('selects a native dropdown option and uploads a file', async () => {
+    const uploadPath = join(artifactsDir, 'profile.pdf');
+    await writeFile(uploadPath, 'pretend pdf bytes');
+    const onboarding = goldenPathSchema.parse({
+      name: 'onboarding',
+      steps: [
+        { id: 'o1', action: { kind: 'goto', path: '/onboarding' } },
+        { id: 'o2', action: { kind: 'select', selector: 'select[name=country]', value: 'IN', description: 'country' } },
+        { id: 'o3', action: { kind: 'upload', selector: 'input[name=document]', path: uploadPath, description: 'document' } },
+        { id: 'o4', action: { kind: 'expect_text', text: 'country=India file=profile.pdf' } },
+      ],
+    });
+    const attempt = await replayFlow(onboarding, { baseUrl: url, artifactsDir, runId: 't5' });
+    expect(attempt.outcome).toBe('completed');
+    expect(attempt.steps.every((s) => s.status === 'ok')).toBe(true);
   });
 });

@@ -48,7 +48,7 @@ The sweep is what covers "the rest of the app" outside mapped flows: it catches 
 
 ### 3.2 Scope doctrine: primitives, not apps
 
-There are millions of distinct apps; Vigil never scopes against apps. It scopes against the **action vocabulary** of golden paths (navigate, click, fill, assert-text, assert-url; `upload` and `select` are known next additions). Every web app is a sentence written in this small alphabet, and the browser normalizes everything to DOM. Consequences:
+There are millions of distinct apps; Vigil never scopes against apps. It scopes against the **action vocabulary** of golden paths (navigate, click, fill, select, upload, assert-text, assert-url). Every web app is a sentence written in this small alphabet, and the browser normalizes everything to DOM. Consequences:
 
 - **Coverage grows by primitives, not integrations.** Each new action kind unlocks a class of apps, not one app. The decision rule for any unsupported need: *is it a primitive (reusable across thousands of apps) or app-specific semantics?* Primitives are queued by demand frequency; app semantics get a polite no.
 - **Novelty is absorbed at map time, not product time.** The MAP agent reads whatever app is in front of it; replay is app-agnostic. Unknown apps are a per-app one-time cost, never a per-product scoping problem.
