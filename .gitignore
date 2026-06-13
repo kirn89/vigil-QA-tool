@@ -6,3 +6,5 @@ artifacts/
 .pgdata*
 .claude/
 .claire/
+flows-private/
+.playwright-mcp/
