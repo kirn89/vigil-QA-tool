@@ -4,9 +4,11 @@
 
 **Goal:** Replace hand-written golden paths with auto-discovery: a Claude (Sonnet 4.6) agent drives Playwright over an accessibility-tree tool surface to explore a registered app and propose `GoldenPath` flows, persisted as `status='proposed'` for the founder to confirm — plus the sweep post-login-seed coverage fix from spec §6.2.
 
-**Architecture:** Claude API + tool use with a **manual agentic loop**, Playwright hosted on our own runner (not Managed Agents). The Anthropic client sits behind a small `LLMClient` interface so the loop is tested deterministically with a scripted fake; the browser tools are tested with real Playwright against the existing `@vigil/fixture-app`; only the final live run needs an API key. Proposed flows are validated by the **existing `goldenPathSchema`** before persistence. Spec: `docs/superpowers/specs/2026-06-11-vigil-app-watcher-design.md` §6.1, §6.2.
+**Architecture:** LLM + tool use with a **manual agentic loop**, Playwright hosted on our own runner. The model is reached through **OpenRouter** (founder's choice) via its OpenAI-compatible endpoint, behind a small provider-neutral `LLMClient` interface — so the loop is tested deterministically with a scripted fake, the browser tools are tested with real Playwright against the existing `@vigil/fixture-app`, and only the final live run needs an API key. Proposed flows are validated by the **existing `goldenPathSchema`** before persistence. Spec: `docs/superpowers/specs/2026-06-11-vigil-app-watcher-design.md` §6.1, §6.2.
 
-**Tech Stack:** Existing `@vigil/engine` (Node 20, TypeScript ESM, Playwright, pg, Vitest, embedded-postgres), plus `@anthropic-ai/sdk`. Model `claude-sonnet-4-6`. **MVP simplification:** thinking is omitted (the mapper runs without adaptive thinking) so the manual loop only replays `text`/`tool_use` blocks — revisit if mapping quality needs it.
+> **Provider note:** we call a Claude (Sonnet-class) model, but through **OpenRouter**, not the Anthropic API directly. OpenRouter is OpenAI-compatible, so the real client uses the `openai` SDK pointed at `https://openrouter.ai/api/v1` and adapts OpenAI-style tool calls to/from our neutral `ContentBlock` shape. The `LLMClient` interface, `FakeLLMClient`, and the entire agent loop are unchanged by this choice — only the one concrete client differs. The model is env-configurable (`VIGIL_MAP_MODEL`).
+
+**Tech Stack:** Existing `@vigil/engine` (Node 20, TypeScript ESM, Playwright, pg, Vitest, embedded-postgres), plus the `openai` SDK (used against OpenRouter). Model via `VIGIL_MAP_MODEL` (default `anthropic/claude-sonnet-4.5`). **MVP simplification:** no extended-thinking handling — the manual loop only replays `text`/`tool_use` blocks; OpenAI-style chat completions return plain assistant text + tool calls, which maps cleanly.
 
 **Conventions:** all map code under `packages/engine/src/map/`. Tests under `packages/engine/test/`. Run a single test file with `pnpm --filter @vigil/engine test -- <name>`. Every commit message ends with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` (omitted below for brevity — always append it). The local DB (`pnpm db:dev`, embedded PG on 54329) must be importable by the test globalSetup, which already boots it.
 
@@ -17,11 +19,11 @@
 ```
 packages/engine/
   src/
-    env.ts                       # MODIFY: widen union to include ANTHROPIC_API_KEY
+    env.ts                       # MODIFY: widen union to include OPENROUTER_API_KEY
     map/
       browserTools.ts            # MapSession: Playwright tool surface + computeSelector + snapshot
-      toolSchemas.ts             # Anthropic tool definitions (navigate/snapshot/click/fill/select/read_state/propose_flows)
-      llmClient.ts               # LLMClient interface, ContentBlock types, AnthropicClient impl
+      toolSchemas.ts             # Tool definitions (navigate/snapshot/click/fill/select/read_state/propose_flows)
+      llmClient.ts               # LLMClient interface, ContentBlock types, OpenRouterClient impl, FakeLLMClient
       mapper.ts                  # mapApp(): the manual agentic loop + proposal validation
     db/flowsRepo.ts              # MODIFY: listProposedFlows, confirmFlow, deleteProposedFlows
     sweep/crawler.ts             # MODIFY: seed crawl from post-login landing URL (§6.2 gap 1)
@@ -38,7 +40,7 @@ No new DB migration — `flows.status` already includes `'proposed'` (migration 
 
 ---
 
-### Task 1: Anthropic SDK dependency + env widening
+### Task 1: OpenAI SDK (for OpenRouter) dependency + env widening
 
 **Files:**
 - Modify: `packages/engine/package.json` (add dependency), `packages/engine/src/env.ts`
@@ -47,8 +49,9 @@ No new DB migration — `flows.status` already includes `'proposed'` (migration 
 - [ ] **Step 1: Add the dependency**
 
 ```bash
-pnpm --filter @vigil/engine add @anthropic-ai/sdk
+pnpm --filter @vigil/engine add openai
 ```
+(We call a Claude model *through OpenRouter*, which is OpenAI-compatible — hence the `openai` SDK, not `@anthropic-ai/sdk`.)
 
 - [ ] **Step 2: Write the failing test**
 
@@ -57,18 +60,18 @@ pnpm --filter @vigil/engine add @anthropic-ai/sdk
 import { afterEach, describe, expect, it } from 'vitest';
 import { env } from '../src/env.js';
 
-const KEY = 'ANTHROPIC_API_KEY';
+const KEY = 'OPENROUTER_API_KEY';
 const original = process.env[KEY];
 afterEach(() => { if (original === undefined) delete process.env[KEY]; else process.env[KEY] = original; });
 
 describe('env', () => {
-  it('reads ANTHROPIC_API_KEY when set', () => {
-    process.env[KEY] = 'sk-test-123';
-    expect(env('ANTHROPIC_API_KEY')).toBe('sk-test-123');
+  it('reads OPENROUTER_API_KEY when set', () => {
+    process.env[KEY] = 'sk-or-test-123';
+    expect(env('OPENROUTER_API_KEY')).toBe('sk-or-test-123');
   });
   it('throws a helpful error when a required var is missing', () => {
     delete process.env[KEY];
-    expect(() => env('ANTHROPIC_API_KEY')).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => env('OPENROUTER_API_KEY')).toThrow(/OPENROUTER_API_KEY/);
   });
 });
 ```
@@ -76,7 +79,7 @@ describe('env', () => {
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `pnpm --filter @vigil/engine test -- env`
-Expected: FAIL — `env('ANTHROPIC_API_KEY')` is a type error / the union doesn't include the key.
+Expected: FAIL — `env('OPENROUTER_API_KEY')` is a type error / the union doesn't include the key.
 
 - [ ] **Step 4: Widen the env union**
 
@@ -86,7 +89,7 @@ export function env(name: 'DATABASE_URL' | 'VIGIL_SECRET_KEY'): string {
 ```
 to:
 ```ts
-export function env(name: 'DATABASE_URL' | 'VIGIL_SECRET_KEY' | 'ANTHROPIC_API_KEY'): string {
+export function env(name: 'DATABASE_URL' | 'VIGIL_SECRET_KEY' | 'OPENROUTER_API_KEY'): string {
 ```
 (The body is unchanged — it already reads `process.env[name]` and throws if missing.)
 
@@ -99,7 +102,7 @@ Run: `pnpm --filter @vigil/engine typecheck` → clean.
 
 ```bash
 git add packages/engine
-git commit -m "chore: add Anthropic SDK and ANTHROPIC_API_KEY env support"
+git commit -m "chore: add OpenAI SDK (for OpenRouter) and OPENROUTER_API_KEY env support"
 ```
 
 ---
@@ -332,7 +335,7 @@ git commit -m "feat: MapSession browser tool surface with durable selectors and 
 
 ### Task 3: Tool schemas
 
-The Anthropic tool definitions the agent sees. `propose_flows` carries the discovered journeys; its schema is intentionally permissive (action is a generic object) because the strict validation happens against `goldenPathSchema` after the call (Anthropic JSON schema can't express the discriminated union with all our constraints).
+The tool definitions the agent sees (provider-neutral `ToolDef`; the OpenRouter client maps them to OpenAI `function` tools). `propose_flows` carries the discovered journeys; its schema is intentionally permissive (action is a generic object) because the strict validation happens against `goldenPathSchema` after the call (JSON Schema can't express the discriminated union with all our constraints).
 
 **Files:**
 - Create: `packages/engine/src/map/toolSchemas.ts`
@@ -451,20 +454,20 @@ Expected: PASS (3 tests).
 
 ```bash
 git add packages/engine
-git commit -m "feat: Anthropic tool schemas for the map agent"
+git commit -m "feat: tool schemas for the map agent"
 ```
 
 ---
 
 ### Task 4: LLM client boundary
 
-A tiny interface over the one Anthropic call the loop makes, so the loop is testable with a scripted fake. The real `AnthropicClient` adapts our `ContentBlock` shapes to/from the SDK (they are structurally compatible). Thinking is omitted (MVP simplification) so only `text`/`tool_use` blocks flow.
+A tiny provider-neutral interface over the one LLM call the loop makes, so the loop is testable with a scripted fake. The real `OpenRouterClient` uses the `openai` SDK against OpenRouter and adapts OpenAI-style chat/tool-calls to/from our neutral `ContentBlock` shape. Only `text`/`tool_use` blocks flow (no extended-thinking handling).
 
 **Files:**
 - Create: `packages/engine/src/map/llmClient.ts`
 - Test: `packages/engine/test/llmClient.test.ts`
 
-- [ ] **Step 1: Write the failing test** (tests only the pure FakeLLMClient + types — the real Anthropic call is exercised live in Task 8, never in unit tests)
+- [ ] **Step 1: Write the failing test** (tests only the pure FakeLLMClient + types — the real OpenRouter call is exercised live in Task 8, never in unit tests)
 
 `packages/engine/test/llmClient.test.ts`:
 ```ts
@@ -500,7 +503,7 @@ Expected: FAIL — module not found.
 
 `packages/engine/src/map/llmClient.ts`:
 ```ts
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { env } from '../env.js';
 import type { ToolDef } from './toolSchemas.js';
 
@@ -529,26 +532,53 @@ export class FakeLLMClient implements LLMClient {
   }
 }
 
-/** Real client. Sonnet 4.6, tools GA, thinking omitted (MVP). */
-export class AnthropicClient implements LLMClient {
-  private readonly anthropic = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
+function safeParseArgs(s: string): unknown {
+  try { return JSON.parse(s); } catch { return {}; }
+}
+
+/** Real client: a Claude (Sonnet-class) model reached through OpenRouter's OpenAI-
+ *  compatible endpoint. Adapts our neutral ContentBlock shape to/from OpenAI chat +
+ *  tool-calls. Model is env-configurable; default is a Sonnet slug on OpenRouter. */
+export class OpenRouterClient implements LLMClient {
+  private readonly model = process.env.VIGIL_MAP_MODEL ?? 'anthropic/claude-sonnet-4.5';
+  private readonly openai = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: env('OPENROUTER_API_KEY'),
+  });
 
   async createMessage(req: LLMRequest): Promise<LLMResponse> {
-    const resp = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      system: req.system,
-      tools: req.tools as Anthropic.Tool[],
-      // Our ContentBlock shapes are structurally compatible with the SDK message params.
-      messages: req.messages as unknown as Anthropic.MessageParam[],
-    });
-    const content: ContentBlock[] = [];
-    for (const block of resp.content) {
-      if (block.type === 'text') content.push({ type: 'text', text: block.text });
-      else if (block.type === 'tool_use') content.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
-      // thinking/other blocks are dropped (thinking is not enabled for the mapper)
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: 'system', content: req.system }];
+    for (const m of req.messages) {
+      if (m.role === 'assistant') {
+        const text = m.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('');
+        const toolCalls = m.content
+          .filter((b) => b.type === 'tool_use')
+          .map((b) => {
+            const tu = b as { id: string; name: string; input: unknown };
+            return { id: tu.id, type: 'function' as const, function: { name: tu.name, arguments: JSON.stringify(tu.input ?? {}) } };
+          });
+        messages.push({ role: 'assistant', content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) });
+      } else {
+        for (const b of m.content) {
+          if (b.type === 'text') messages.push({ role: 'user', content: b.text });
+          else if (b.type === 'tool_result') messages.push({ role: 'tool', tool_call_id: b.tool_use_id, content: b.content });
+        }
+      }
     }
-    return { stopReason: resp.stop_reason ?? 'end_turn', content };
+    const tools = req.tools.map((t: ToolDef) => ({
+      type: 'function' as const,
+      function: { name: t.name, description: t.description, parameters: t.input_schema as Record<string, unknown> },
+    }));
+
+    const resp = await this.openai.chat.completions.create({ model: this.model, max_tokens: 8000, messages, tools });
+    const msg = resp.choices[0]?.message;
+    if (msg?.tool_calls?.length) {
+      const content: ContentBlock[] = msg.tool_calls.map((tc) => ({
+        type: 'tool_use', id: tc.id, name: tc.function.name, input: safeParseArgs(tc.function.arguments),
+      }));
+      return { stopReason: 'tool_use', content };
+    }
+    return { stopReason: 'end_turn', content: [{ type: 'text', text: msg?.content ?? '' }] };
   }
 }
 ```
@@ -562,7 +592,7 @@ Run: `pnpm --filter @vigil/engine typecheck` → clean.
 
 ```bash
 git add packages/engine
-git commit -m "feat: LLMClient boundary with Anthropic impl and scripted fake"
+git commit -m "feat: LLMClient boundary with OpenRouter impl and scripted fake"
 ```
 
 ---
@@ -915,7 +945,7 @@ In `packages/engine/src/cli.ts`, add imports near the top (with the other import
 ```ts
 import { MapSession } from './map/browserTools.js';
 import { mapApp } from './map/mapper.js';
-import { AnthropicClient, type LLMClient } from './map/llmClient.js';
+import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
 ```
 (Replace the existing `flowsRepo` import line so it includes all of these — do not create a duplicate import.)
@@ -926,7 +956,7 @@ export interface MapCliOptions { client?: LLMClient; maxSteps?: number; }
 
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
   const app = await requireApp(appName);
-  const client = opts.client ?? new AnthropicClient();
+  const client = opts.client ?? new OpenRouterClient();
   const session = new MapSession(app.productionUrl);
   await session.start();
   let proposals;
@@ -1092,7 +1122,7 @@ git commit -m "fix: sweep seeds crawl from post-login landing page (spec 6.2 gap
 
 ### Task 8: Live mapping run (gated, manual — like Task 10 dogfooding)
 
-No automated test. Validates the real Anthropic agent against an actual app. Needs `ANTHROPIC_API_KEY` and the local DB.
+No automated test. Validates the real OpenRouter-backed agent against an actual app. Needs `OPENROUTER_API_KEY` (and optionally `VIGIL_MAP_MODEL`) and the local DB.
 
 - [ ] **Step 1: Prerequisites**
 
@@ -1101,7 +1131,8 @@ No automated test. Validates the real Anthropic agent against an actual app. Nee
 cd packages/engine && pnpm db:dev
 # terminal B
 cd packages/engine && pnpm migrate
-export ANTHROPIC_API_KEY=sk-ant-...   # founder provides
+export OPENROUTER_API_KEY=sk-or-...                 # founder provides
+export VIGIL_MAP_MODEL=anthropic/claude-sonnet-4.5  # pick the exact slug from openrouter.ai/models
 ```
 
 - [ ] **Step 2: Map the in-repo fixture first (cheapest, fully controlled)**
@@ -1129,7 +1160,7 @@ Review each proposed flow for correctness and safety (no destructive steps — t
 
 - [ ] **Step 4: Record observations**
 
-Note token cost per map run (visible in Anthropic console) against the §9 estimate ($0.20–$1.00/app), and any flows the agent missed or mis-mapped — these tune the system prompt. No code commit unless prompt tuning is needed; if it is:
+Note token cost per map run (visible in your OpenRouter dashboard) against the §9 estimate ($0.20–$1.00/app), and any flows the agent missed or mis-mapped — these tune the system prompt. No code commit unless prompt tuning is needed; if it is:
 ```bash
 git add packages/engine/src/map/mapper.ts
 git commit -m "tune: map system prompt from live-run observations"
@@ -1141,4 +1172,4 @@ git commit -m "tune: map system prompt from live-run observations"
 
 1. **Spec coverage:** §6.1 MAP design (surface = Claude API + tool use, manual loop, Sonnet, accessibility-tree tools, propose GoldenPath validated by goldenPathSchema, status='proposed', confirmation gate, destructive controls withheld, cost control via maxSteps/cap) → Tasks 2–6, 8. §6.2 gap 1 (sweep post-login seed) → Task 7. §6.2 gap 2 (more mapped flows carry feature depth) → addressed by the mapper itself (Tasks 2–6). §6.2 gap 3 (metered test accounts) is a product/onboarding requirement, not engine code — explicitly out of scope for this plan; noted for Plan 2. §3.2 scope doctrine (novelty absorbed at map time; deterministic replay after) → realized by the mapper feeding `status='proposed'` flows into the existing replay engine. HEAL/DIAGNOSE/queue/scheduler remain separate future plans (unchanged).
 2. **Placeholder scan:** Task 8 contains `sk-ant-...` and a port placeholder — runtime values only the founder/runtime has, not missing design. No TBDs elsewhere.
-3. **Type consistency:** `MapSession` (Task 2) methods `navigate/snapshot/click/fill/select/readState/textOf` are consumed by `dispatchBrowserTool` in Task 5 and `cmdMap` in Task 6. `SnapshotEntry{ref,role,name,selector}` from Task 2 is rendered in Task 5. `ContentBlock`/`LLMClient`/`LLMResponse`/`LLMRequest` from Task 4 are used by `mapApp` (Task 5), `FakeLLMClient` (Tasks 4–6), and `AnthropicClient` (Task 4, used in Task 6 `cmdMap`). `ToolDef`/`MAP_TOOLS` from Task 3 used in Task 4's `LLMRequest.tools` and Task 5's loop. `goldenPathSchema`/`GoldenPath` (pre-existing) validate proposals in Task 5 and persist via `addFlow(_, _, 'proposed')` (pre-existing signature) in Task 6. `listProposedFlows`/`confirmFlow`/`deleteProposedFlows` defined in Task 6 used by `cmdMap`/`cmdFlowConfirm`/`cmdReport` in the same task. Verified consistent.
+3. **Type consistency:** `MapSession` (Task 2) methods `navigate/snapshot/click/fill/select/readState/textOf` are consumed by `dispatchBrowserTool` in Task 5 and `cmdMap` in Task 6. `SnapshotEntry{ref,role,name,selector}` from Task 2 is rendered in Task 5. `ContentBlock`/`LLMClient`/`LLMResponse`/`LLMRequest` from Task 4 are used by `mapApp` (Task 5), `FakeLLMClient` (Tasks 4–6), and `OpenRouterClient` (Task 4, used in Task 6 `cmdMap`). `ToolDef`/`MAP_TOOLS` from Task 3 used in Task 4's `LLMRequest.tools` and Task 5's loop. `goldenPathSchema`/`GoldenPath` (pre-existing) validate proposals in Task 5 and persist via `addFlow(_, _, 'proposed')` (pre-existing signature) in Task 6. `listProposedFlows`/`confirmFlow`/`deleteProposedFlows` defined in Task 6 used by `cmdMap`/`cmdFlowConfirm`/`cmdReport` in the same task. Verified consistent.
