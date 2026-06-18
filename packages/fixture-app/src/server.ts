@@ -40,8 +40,8 @@ export function createFixtureApp() {
   app.get('/login', (_req, res) =>
     res.send(page('Login', `<h1>Sign in</h1>
       <form method="post" action="/login">
-        <input name="email" placeholder="Email">
-        <input name="password" type="password" placeholder="Password">
+        <input id="email" name="email" placeholder="Email">
+        <input id="password" name="password" type="password" placeholder="Password">
         <button type="submit">Sign in</button>
       </form>`)));
 
@@ -94,7 +94,7 @@ export function createFixtureApp() {
     res.send(page('Onboarding', `<h1>Create your profile</h1>
       <form>
         <label>Country
-          <select name="country" id="country">
+          <select name="country">
             <option value="">Select…</option>
             <option value="IN">India</option>
             <option value="US">USA</option>
@@ -107,7 +107,7 @@ export function createFixtureApp() {
         <output id="result">nothing selected yet</output>
       </form>
       <script>
-        const c = document.getElementById('country');
+        const c = document.querySelector('select[name="country"]');
         const d = document.getElementById('document');
         const r = document.getElementById('result');
         function update() {
