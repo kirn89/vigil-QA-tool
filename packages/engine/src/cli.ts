@@ -99,7 +99,7 @@ export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise
   const client = opts.client ?? new OpenRouterClient();
   const session = new MapSession(app.productionUrl);
   await session.start();
-  let proposals;
+  let proposals: Awaited<ReturnType<typeof mapApp>>;
   try {
     proposals = await mapApp(session, client, { credentials: app.credentials ?? undefined, maxSteps: opts.maxSteps });
   } finally {
@@ -108,8 +108,16 @@ export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise
   await deleteProposedFlows(app.id);
   const lines: string[] = [`Mapped ${appName}: ${proposals.length} proposed flow(s).`];
   for (const gp of proposals) {
-    await addFlow(app.id, gp, 'proposed');
-    lines.push(`  • ${gp.name} (${gp.steps.length} steps) — confirm with: vigil flow:confirm ${appName} ${gp.name}`);
+    try {
+      await addFlow(app.id, gp, 'proposed');
+      lines.push(`  • ${gp.name} (${gp.steps.length} steps) — confirm with: vigil flow:confirm ${appName} ${gp.name}`);
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') {
+        lines.push(`  • ${gp.name} — skipped (a flow named "${gp.name}" already exists on ${appName})`);
+      } else {
+        throw e;
+      }
+    }
   }
   for (const l of lines) console.log(l);
   return { lines };
