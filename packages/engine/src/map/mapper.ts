@@ -28,7 +28,7 @@ function kickoff(credentials?: { email: string; password: string }, targetJourne
   return `Explore this app and map all critical journeys. ${cred}`;
 }
 
-function renderSnapshot(entries: SnapshotEntry[]): string {
+export function renderSnapshot(entries: SnapshotEntry[]): string {
   if (entries.length === 0) return '(no interactive elements)';
   return entries.map((e) => `[${e.ref}] ${e.role} "${e.name}" -> ${e.selector}`).join('\n');
 }
