@@ -68,6 +68,7 @@ export async function mapApp(session: MapSession, client: LLMClient, opts: MapOp
   const messages: LLMMessage[] = [{ role: 'user', content: [{ type: 'text', text: kickoff(opts.credentials) }] }];
 
   for (let step = 0; step < maxSteps; step++) {
+    // Shallow-copy so a recording client (FakeLLMClient) captures a per-call snapshot, not the live array we keep mutating.
     const resp = await client.createMessage({ system: SYSTEM, tools: MAP_TOOLS, messages: [...messages] });
     messages.push({ role: 'assistant', content: resp.content });
     if (resp.stopReason === 'end_turn') break;
@@ -77,7 +78,8 @@ export async function mapApp(session: MapSession, client: LLMClient, opts: MapOp
       if (block.type !== 'tool_use') continue;
       const content = block.name === 'propose_flows'
         ? handleProposals(block.input, proposals)
-        : await dispatchBrowserTool(session, block.name, block.input);
+        : await dispatchBrowserTool(session, block.name, block.input)
+            .catch((e: unknown) => `error: ${e instanceof Error ? e.message : String(e)}`);
       toolResults.push({ type: 'tool_result', tool_use_id: block.id, content });
     }
     if (toolResults.length === 0) break;
