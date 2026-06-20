@@ -6,6 +6,7 @@ import { ensureUser, createApp, getAppByName, type AppRecord } from './db/appsRe
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
 import { MapSession } from './map/browserTools.js';
 import { mapApp } from './map/mapper.js';
+import { verifyFlow } from './map/verify.js';
 import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
 import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
@@ -92,7 +93,7 @@ export async function cmdSweep(appName: string): Promise<void> {
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
 }
 
-export interface MapCliOptions { client?: LLMClient; maxSteps?: number; }
+export interface MapCliOptions { client?: LLMClient; maxSteps?: number; stepTimeoutMs?: number; }
 
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
   const app = await requireApp(appName);
@@ -108,24 +109,26 @@ export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise
   await deleteProposedFlows(app.id);
   const lines: string[] = [`Mapped ${appName}: ${proposals.length} proposed flow(s).`];
   for (const gp of proposals) {
+    const { verified, note } = await verifyFlow(gp, {
+      baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs,
+    });
     try {
-      await addFlow(app.id, gp, 'proposed');
-      lines.push(`  • ${gp.name} (${gp.steps.length} steps) — confirm with: vigil flow:confirm ${appName} ${gp.name}`);
+      await addFlow(app.id, gp, 'proposed', { verified, verificationNote: note ?? null, source: 'mapped' });
+      const mark = verified ? '✅ verified' : `⚠️ unverified (${note})`;
+      lines.push(`  • ${gp.name} (${gp.steps.length} steps) — ${mark}`);
     } catch (e) {
-      if ((e as { code?: string }).code === '23505') {
-        lines.push(`  • ${gp.name} — skipped (a flow named "${gp.name}" already exists on ${appName})`);
-      } else {
-        throw e;
-      }
+      if ((e as { code?: string }).code === '23505') lines.push(`  • ${gp.name} — skipped (already exists on ${appName})`);
+      else throw e;
     }
   }
+  lines.push(`Confirm a verified flow with: vigil flow:confirm ${appName} "<name>"`);
   for (const l of lines) console.log(l);
   return { lines };
 }
 
-export async function cmdFlowConfirm(appName: string, flowName: string): Promise<void> {
+export async function cmdFlowConfirm(appName: string, flowName: string, opts: { force?: boolean } = {}): Promise<void> {
   const app = await requireApp(appName);
-  const res = await confirmFlow(app.id, flowName);
+  const res = await confirmFlow(app.id, flowName, opts);
   console.log(res.ok ? `Confirmed "${flowName}" — it will now be watched.` : `Did not confirm "${flowName}": ${res.reason}`);
 }
 
@@ -143,7 +146,10 @@ export async function cmdReport(appName: string): Promise<{ lines: string[] }> {
   const proposed = await listProposedFlows(app.id);
   if (proposed.length) {
     lines.push(`# proposed flows (awaiting confirm)`);
-    for (const f of proposed) lines.push(`PROPOSED ${f.goldenPath.name} (${f.goldenPath.steps.length} steps)`);
+    for (const f of proposed) {
+      const mark = f.verified ? 'VERIFIED' : `UNVERIFIED (${f.verificationNote ?? 'replay failed'})`;
+      lines.push(`PROPOSED ${f.goldenPath.name} — ${mark}`);
+    }
   }
   for (const l of lines) console.log(l);
   return { lines };
@@ -172,8 +178,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (app) => { await cmdSweep(app); });
   program.command('map').argument('<app>')
     .action(async (app) => { await cmdMap(app); });
-  program.command('flow:confirm').argument('<app>').argument('<flow>')
-    .action(async (app, flow) => { await cmdFlowConfirm(app, flow); });
+  program.command('flow:confirm').argument('<app>').argument('<flow>').option('--force')
+    .action(async (app, flow, o) => { await cmdFlowConfirm(app, flow, { force: o.force }); });
   program.command('report').argument('<app>')
     .action(async (app) => { await cmdReport(app); });
   program.hook('postAction', async () => { await closePool(); });
