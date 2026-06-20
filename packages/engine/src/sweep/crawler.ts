@@ -79,17 +79,23 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
     const context = await browser.newContext({ userAgent: VIGIL_USER_AGENT });
     const page = await context.newPage();
 
+    let postLoginUrl: string | undefined;
     if (opts.loginFlow) {
       const replayOpts: ReplayOptions = {
         baseUrl: opts.baseUrl, credentials: opts.credentials,
         artifactsDir: 'artifacts/sweep-login', runId: `sweep-${Date.now()}`,
       };
       await performSteps(page, opts.loginFlow, replayOpts);
+      postLoginUrl = page.url();
     }
 
     const queue: string[] = [new URL(opts.baseUrl).href];
     for (const seed of opts.extraSeeds ?? []) {
       const n = normalize(seed, opts.baseUrl);
+      if (n) queue.push(n);
+    }
+    if (postLoginUrl) {
+      const n = normalize(postLoginUrl, opts.baseUrl);
       if (n) queue.push(n);
     }
     const visited = new Set<string>();
