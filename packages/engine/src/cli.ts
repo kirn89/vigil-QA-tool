@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureUser, createApp, getAppByName, type AppRecord } from './db/appsRepo.js';
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
+import { goldenPathSchema } from './flows/goldenPath.js';
 import { MapSession } from './map/browserTools.js';
 import { mapApp } from './map/mapper.js';
 import { verifyFlow } from './map/verify.js';
@@ -42,8 +43,43 @@ export async function cmdAppAdd(opts: {
 export async function cmdFlowAdd(appName: string, file: string): Promise<void> {
   const app = await requireApp(appName);
   const json = JSON.parse(await readFile(file, 'utf8'));
-  const flow = await addFlow(app.id, json, 'confirmed');
-  console.log(`Added flow "${flow.goldenPath.name}" (${flow.goldenPath.steps.length} steps) to ${appName}`);
+  const parsed = goldenPathSchema.parse(json);
+  const { verified, note } = await verifyFlow(parsed, { baseUrl: app.productionUrl, credentials: app.credentials ?? undefined });
+  if (verified) {
+    await addFlow(app.id, parsed, 'confirmed', { verified: true, source: 'manual' });
+    console.log(`Added & verified "${parsed.name}" (${parsed.steps.length} steps) — now watched.`);
+  } else {
+    await addFlow(app.id, parsed, 'proposed', { verified: false, verificationNote: note ?? null, source: 'manual' });
+    console.log(`Added "${parsed.name}" as UNVERIFIED (${note}). Fix it, or confirm with --force if you're sure.`);
+  }
+}
+
+export interface MapCliOptions { client?: LLMClient; maxSteps?: number; stepTimeoutMs?: number; }
+
+export async function cmdFlowDescribe(appName: string, description: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const session = new MapSession(app.productionUrl);
+  await session.start();
+  let proposals;
+  try {
+    proposals = await mapApp(session, client, { credentials: app.credentials ?? undefined, maxSteps: opts.maxSteps, targetJourney: description });
+  } finally {
+    await session.close();
+  }
+  const lines: string[] = [`Described "${description}" → ${proposals.length} flow(s):`];
+  for (const gp of proposals) {
+    const { verified, note } = await verifyFlow(gp, { baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs });
+    try {
+      await addFlow(app.id, gp, 'proposed', { verified, verificationNote: note ?? null, source: 'described' });
+      lines.push(`  • ${gp.name} — ${verified ? '✅ verified' : `⚠️ unverified (${note})`}`);
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') lines.push(`  • ${gp.name} — skipped (already exists)`);
+      else throw e;
+    }
+  }
+  for (const l of lines) console.log(l);
+  return { lines };
 }
 
 export interface CheckOptions { preview?: boolean; retries?: number; stepTimeoutMs?: number; }
@@ -92,8 +128,6 @@ export async function cmdSweep(appName: string): Promise<void> {
   await recordSweep(app.id, result);
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
 }
-
-export interface MapCliOptions { client?: LLMClient; maxSteps?: number; stepTimeoutMs?: number; }
 
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
   const app = await requireApp(appName);
@@ -164,6 +198,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (o) => { await cmdAppAdd({ name: o.name, url: o.url, previewUrl: o.previewUrl, loginEmail: o.loginEmail, loginPassword: o.loginPassword }); });
   program.command('flow:add').argument('<app>').argument('<file>')
     .action(async (app, file) => { await cmdFlowAdd(app, file); });
+  program.command('flow:describe').argument('<app>').argument('<description>')
+    .action(async (app, description) => { await cmdFlowDescribe(app, description); });
   program.command('check').argument('<app>')
     .option('--preview')
     .option('--retries <n>', 'max attempts per flow', '3')

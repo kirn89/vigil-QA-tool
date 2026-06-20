@@ -18,10 +18,14 @@ Process:
 
 Keep each flow <= 30 steps. Cover every distinct critical journey you can reach; skip only truly trivial interactions (expanding an FAQ accordion, opening a footer link).`;
 
-function kickoff(credentials?: { email: string; password: string }): string {
-  return credentials
-    ? 'Explore this app. Test credentials are available — fill {{email}} and {{password}} as the login values (do not invent real values).'
-    : 'Explore this app. No login credentials are available — map what you can reach logged out.';
+function kickoff(credentials?: { email: string; password: string }, targetJourney?: string): string {
+  const cred = credentials
+    ? 'Test credentials are available — fill {{email}} and {{password}} as the login values (do not invent real values).'
+    : 'No login credentials are available — map what you can reach logged out.';
+  if (targetJourney) {
+    return `Map ONE specific journey the user asked for: "${targetJourney}". Explore only as much as needed to perform and capture that one journey (log in first if it requires auth). ${cred} Propose exactly that one flow.`;
+  }
+  return `Explore this app and map all critical journeys. ${cred}`;
 }
 
 function renderSnapshot(entries: SnapshotEntry[]): string {
@@ -62,12 +66,13 @@ function handleProposals(input: unknown, collected: GoldenPath[]): string {
 export interface MapOptions {
   credentials?: { email: string; password: string };
   maxSteps?: number;
+  targetJourney?: string;
 }
 
 export async function mapApp(session: MapSession, client: LLMClient, opts: MapOptions = {}): Promise<GoldenPath[]> {
   const maxSteps = opts.maxSteps ?? 40;
   const proposals: GoldenPath[] = [];
-  const messages: LLMMessage[] = [{ role: 'user', content: [{ type: 'text', text: kickoff(opts.credentials) }] }];
+  const messages: LLMMessage[] = [{ role: 'user', content: [{ type: 'text', text: kickoff(opts.credentials, opts.targetJourney) }] }];
 
   for (let step = 0; step < maxSteps; step++) {
     // Shallow-copy so a recording client (FakeLLMClient) captures a per-call snapshot, not the live array we keep mutating.
