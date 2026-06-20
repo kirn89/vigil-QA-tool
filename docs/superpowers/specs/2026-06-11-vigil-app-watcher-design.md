@@ -159,11 +159,24 @@ The first real run (settlenepal, scholarai) exposed three concrete breadth gaps,
 2. **Sweep is blind to in-page feature states.** A link-crawler covers linked *pages*; single-URL tools expose features as click-driven states (modals, wizards, the upload/question panel). These are covered by *flows* (depth), not the sweep (breadth) — so the answer is more **mapped flows from MAP**, plus optional LLM-assisted reachable-view enumeration later.
 3. **Metered test accounts can't sustain nightly watching.** ScholarAI's free tier caps at 3 docs / 2 questions, so resource-consuming flows are "run-once to prove," not nightly. **Product requirement:** an "unmetered/elevated test account" story for usage-limited apps, surfaced at onboarding.
 
+### 6.3 The verification gate — one rule, every flow, every source (Plan 1c)
+
+The first live map runs (2026-06-20) proved the mapper is a strong first-drafter but an unreliable one: on the fixture it proposed 3 journeys, 2 grounded-and-correct, 1 hallucinated (invented a `#name` field; asserted "Thank you" where the page says "Thanks") — and the hallucinated one was caught immediately when replayed (BROKEN at the fabricated step). The lesson, now doctrine:
+
+**No flow is trusted (watched) until it has been replayed from scratch and passed. This applies identically regardless of source — LLM-proposed, human-described, or hand-written.** Replay is the lie detector; what survives is *proven*, not *plausible*.
+
+- **Verify after map.** After the agent proposes flows, the engine replays each in a **fresh browser** (same conditions as a real nightly check, so a flow that only worked inside the agent's already-logged-in session — i.e. isn't self-contained — correctly fails). Outcome per flow: `verified` (replay PASS) or `unverified` (replay failed, with the exact failing step + error retained).
+- **Failures are surfaced, never silently dropped.** An `unverified` flow keeps its failure detail and is shown to the user ("couldn't verify — step 2: no element matches `#name`"). The journey is real; we just couldn't auto-nail it. **Confirm warns/blocks on `unverified`** so nothing unproven gets watched by accident.
+- **Auto-revisit (fast-follow, Plan 1c phase 2):** a bounded self-correction loop — feed the replay failure + a fresh snapshot of the failing page back to the agent for ONE correction attempt, then re-verify. This is "revisit and map it correctly," scoped after the gate itself because of its extra per-failure LLM cost.
+- **Human-in-the-loop additions (Plan 1c).** The human can add a journey the tool missed (the unlinked-route / metered-gate case): `vigil flow:describe <app> "<plain English>"` maps that one journey via the LLM; the existing `flow:add <app> <file>` accepts a hand-written golden path. **Both pass through the same verification gate before they can be confirmed** — a human-added flow is replayed before it is ever watched. Honest outcomes: verifies (watched), fails (flagged with why), or **un-testable** (needs multi-user state, or hits a withheld destructive boundary like sending a proposal) — in which case Vigil says "can't safely watch this" rather than pretend.
+
+The doctrine reframes "comprehensive": the goal is not a perfect LLM first draft (impossible) but a **verified set** — cast a wide net (map), let replay filter it, and let the human top up what exploration can't reach, with the same guarantee applied to their additions.
+
 ## 7. Data model (Postgres)
 
 - `users` — auth identity, builder preference (Lovable/Bolt/Cursor/Replit/other).
 - `apps` — production url, optional preview url, name, encrypted test credentials, status.
-- `flows` — app_id, name, status (proposed/confirmed/paused), golden path JSON, version.
+- `flows` — app_id, name, status (proposed/confirmed/paused), golden path JSON, version, `verified` (bool — replayed-from-scratch PASS, §6.3), `verification_note` (failing step + error when unverified), `source` (mapped/described/manual).
 - `jobs` — type (map/run), app_id, state (queued/running/done/failed), priority (check-now > nightly).
 - `runs` — job_id, flow_id, environment (production/preview), verdict (pass/broken/unsure), step trace JSON, screenshot refs, duration, tokens spent.
 - `sweep_findings` — app_id, page url, kind (dead_link/console_error/failed_request/broken_image/unrendered/slow), first_seen, last_seen, status (open/resolved), evidence.
