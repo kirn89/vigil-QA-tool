@@ -125,8 +125,8 @@ export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise
 
 export async function cmdFlowConfirm(appName: string, flowName: string): Promise<void> {
   const app = await requireApp(appName);
-  const ok = await confirmFlow(app.id, flowName);
-  console.log(ok ? `Confirmed "${flowName}" — it will now be watched.` : `No proposed flow named "${flowName}" on ${appName}.`);
+  const res = await confirmFlow(app.id, flowName);
+  console.log(res.ok ? `Confirmed "${flowName}" — it will now be watched.` : `Did not confirm "${flowName}": ${res.reason}`);
 }
 
 export async function cmdReport(appName: string): Promise<{ lines: string[] }> {

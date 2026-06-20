@@ -22,7 +22,7 @@ describe('proposed-flow lifecycle', () => {
     expect((await listProposedFlows(appId)).map((f) => f.goldenPath.name)).toEqual(['login']);
   });
   it('confirms a proposed flow (it then appears as confirmed, not proposed)', async () => {
-    await addFlow(appId, flow('login'), 'proposed');
+    await addFlow(appId, flow('login'), 'proposed', { verified: true, source: 'mapped' });
     await confirmFlow(appId, 'login');
     expect(await listProposedFlows(appId)).toEqual([]);
     expect((await listConfirmedFlows(appId)).map((f) => f.goldenPath.name)).toEqual(['login']);
