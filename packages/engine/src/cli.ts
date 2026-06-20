@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureUser, createApp, getAppByName, type AppRecord } from './db/appsRepo.js';
-import { addFlow, listConfirmedFlows } from './db/flowsRepo.js';
+import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
+import { MapSession } from './map/browserTools.js';
+import { mapApp } from './map/mapper.js';
+import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
 import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
 import { replayFlow } from './replay/executor.js';
@@ -89,6 +92,35 @@ export async function cmdSweep(appName: string): Promise<void> {
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
 }
 
+export interface MapCliOptions { client?: LLMClient; maxSteps?: number; }
+
+export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const session = new MapSession(app.productionUrl);
+  await session.start();
+  let proposals;
+  try {
+    proposals = await mapApp(session, client, { credentials: app.credentials ?? undefined, maxSteps: opts.maxSteps });
+  } finally {
+    await session.close();
+  }
+  await deleteProposedFlows(app.id);
+  const lines: string[] = [`Mapped ${appName}: ${proposals.length} proposed flow(s).`];
+  for (const gp of proposals) {
+    await addFlow(app.id, gp, 'proposed');
+    lines.push(`  • ${gp.name} (${gp.steps.length} steps) — confirm with: vigil flow:confirm ${appName} ${gp.name}`);
+  }
+  for (const l of lines) console.log(l);
+  return { lines };
+}
+
+export async function cmdFlowConfirm(appName: string, flowName: string): Promise<void> {
+  const app = await requireApp(appName);
+  const ok = await confirmFlow(app.id, flowName);
+  console.log(ok ? `Confirmed "${flowName}" — it will now be watched.` : `No proposed flow named "${flowName}" on ${appName}.`);
+}
+
 export async function cmdReport(appName: string): Promise<{ lines: string[] }> {
   const app = await requireApp(appName);
   const lines: string[] = [];
@@ -99,6 +131,11 @@ export async function cmdReport(appName: string): Promise<{ lines: string[] }> {
   lines.push(`# rest of your app (confirmed sweep findings)`);
   for (const f of await confirmedFindings(app.id)) {
     lines.push(`${f.kind}  ${f.pageUrl}  — ${f.evidence}`);
+  }
+  const proposed = await listProposedFlows(app.id);
+  if (proposed.length) {
+    lines.push(`# proposed flows (awaiting confirm)`);
+    for (const f of proposed) lines.push(`PROPOSED ${f.goldenPath.name} (${f.goldenPath.steps.length} steps)`);
   }
   for (const l of lines) console.log(l);
   return { lines };
@@ -125,6 +162,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
   program.command('sweep').argument('<app>')
     .action(async (app) => { await cmdSweep(app); });
+  program.command('map').argument('<app>')
+    .action(async (app) => { await cmdMap(app); });
+  program.command('flow:confirm').argument('<app>').argument('<flow>')
+    .action(async (app, flow) => { await cmdFlowConfirm(app, flow); });
   program.command('report').argument('<app>')
     .action(async (app) => { await cmdReport(app); });
   program.hook('postAction', async () => { await closePool(); });

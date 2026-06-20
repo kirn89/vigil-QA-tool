@@ -20,3 +20,23 @@ export async function listConfirmedFlows(appId: string): Promise<FlowRecord[]> {
     goldenPath: goldenPathSchema.parse(r.golden_path),
   }));
 }
+
+export async function listProposedFlows(appId: string): Promise<FlowRecord[]> {
+  const { rows } = await getPool().query<{ id: string; app_id: string; status: string; version: number; golden_path: unknown }>(
+    `select id, app_id, status, version, golden_path from flows
+     where app_id = $1 and status = 'proposed' order by created_at`, [appId]);
+  return rows.map((r) => ({
+    id: r.id, appId: r.app_id, status: r.status, version: r.version,
+    goldenPath: goldenPathSchema.parse(r.golden_path),
+  }));
+}
+
+export async function confirmFlow(appId: string, name: string): Promise<boolean> {
+  const { rowCount } = await getPool().query(
+    `update flows set status = 'confirmed' where app_id = $1 and name = $2 and status = 'proposed'`, [appId, name]);
+  return (rowCount ?? 0) > 0;
+}
+
+export async function deleteProposedFlows(appId: string): Promise<void> {
+  await getPool().query(`delete from flows where app_id = $1 and status = 'proposed'`, [appId]);
+}
