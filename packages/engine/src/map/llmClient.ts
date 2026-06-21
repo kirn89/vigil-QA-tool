@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { env } from '../env.js';
+import { withRetry } from './retry.js';
 import type { ToolDef } from './toolSchemas.js';
 
 export type ContentBlock =
@@ -39,6 +40,7 @@ export class OpenRouterClient implements LLMClient {
   private readonly openai = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: env('OPENROUTER_API_KEY'),
+    maxRetries: 3, // SDK-level retries for connection errors / 429 / 5xx
   });
 
   async createMessage(req: LLMRequest): Promise<LLMResponse> {
@@ -65,7 +67,7 @@ export class OpenRouterClient implements LLMClient {
       function: { name: t.name, description: t.description, parameters: t.input_schema as Record<string, unknown> },
     }));
 
-    const resp = await this.openai.chat.completions.create({ model: this.model, max_tokens: 8000, messages, tools });
+    const resp = await withRetry(() => this.openai.chat.completions.create({ model: this.model, max_tokens: 8000, messages, tools }));
     const msg = resp.choices[0]?.message;
     // SDK v6+ types tool_calls as ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall.
     // Narrow to 'function' type before accessing .function to satisfy the union.
