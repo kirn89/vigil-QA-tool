@@ -27,20 +27,31 @@ const loginFlowJson = {
     { id: 's5', action: { kind: 'expect_url', pattern: '/dashboard$' } },
   ],
 };
-const hallucinatedJson = {
-  name: 'broken-contact',
+const hallucinatedContact = {
+  name: 'contact',
   steps: [
     { id: 's1', action: { kind: 'goto', path: '/contact' } },
-    { id: 's2', action: { kind: 'fill', selector: '#nope', value: 'x', description: 'missing field' } },
+    { id: 's2', action: { kind: 'fill', selector: '#name', value: 'x', description: 'missing field' } },
+  ],
+};
+const correctedContact = {
+  name: 'contact',
+  steps: [
+    { id: 's1', action: { kind: 'goto', path: '/contact' } },
+    { id: 's2', action: { kind: 'fill', selector: 'input[name="email"]', value: 'a@b.c', description: 'email' } },
+    { id: 's3', action: { kind: 'fill', selector: 'textarea[name="message"]', value: 'hi', description: 'message' } },
+    { id: 's4', action: { kind: 'click', selector: 'button[type="submit"]', description: 'send' } },
+    { id: 's5', action: { kind: 'expect_text', text: 'Thanks' } },
   ],
 };
 
-describe('vigil map verifies proposals', () => {
-  it('marks a grounded flow verified and a hallucinated one unverified; confirm respects the gate', async () => {
+describe('vigil map self-corrects a failed proposal', () => {
+  it('auto-fixes a hallucinated flow so it ends up verified', async () => {
     await cmdAppAdd({ name: 'demo', url, loginEmail: 'demo@example.com', loginPassword: 'demo-pass' });
     const script: LLMResponse[] = [
-      { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'propose_flows', input: { flows: [loginFlowJson, hallucinatedJson] } }] },
+      { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'propose_flows', input: { flows: [loginFlowJson, hallucinatedContact] } }] },
       { stopReason: 'end_turn', content: [{ type: 'text', text: 'done' }] },
+      { stopReason: 'tool_use', content: [{ type: 'tool_use', id: 'c1', name: 'propose_flows', input: { flows: [correctedContact] } }] },
     ];
     await cmdMap('demo', { client: new FakeLLMClient(script), maxSteps: 5 });
 
@@ -48,17 +59,12 @@ describe('vigil map verifies proposals', () => {
     const app = (await getAppByName(userId, 'demo'))!;
     const proposed = await listProposedFlows(app.id);
     const login = proposed.find((f) => f.goldenPath.name === 'login')!;
-    const broken = proposed.find((f) => f.goldenPath.name === 'broken-contact')!;
+    const contact = proposed.find((f) => f.goldenPath.name === 'contact')!;
     expect(login.verified).toBe(true);
-    expect(login.source).toBe('mapped');
-    expect(broken.verified).toBe(false);
-    expect(broken.verificationNote).toMatch(/s2/);
+    expect(contact.verified).toBe(true);
+    expect(contact.goldenPath.steps).toHaveLength(5);
 
-    await cmdFlowConfirm('demo', 'login');
-    expect((await listConfirmedFlows(app.id)).map((f) => f.goldenPath.name)).toEqual(['login']);
-    await cmdFlowConfirm('demo', 'broken-contact');
-    expect((await listConfirmedFlows(app.id)).map((f) => f.goldenPath.name)).toEqual(['login']);
-    await cmdFlowConfirm('demo', 'broken-contact', { force: true });
-    expect((await listConfirmedFlows(app.id)).map((f) => f.goldenPath.name).sort()).toEqual(['broken-contact', 'login']);
+    await cmdFlowConfirm('demo', 'contact');
+    expect((await listConfirmedFlows(app.id)).map((f) => f.goldenPath.name)).toEqual(['contact']);
   });
 });

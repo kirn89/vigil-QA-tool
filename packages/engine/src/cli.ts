@@ -8,6 +8,7 @@ import { goldenPathSchema } from './flows/goldenPath.js';
 import { MapSession } from './map/browserTools.js';
 import { mapApp } from './map/mapper.js';
 import { verifyFlow } from './map/verify.js';
+import { verifyWithCorrection } from './map/correct.js';
 import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
 import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
@@ -69,12 +70,14 @@ export async function cmdFlowDescribe(appName: string, description: string, opts
   }
   const lines: string[] = [`Described "${description}" → ${proposals.length} flow(s):`];
   for (const gp of proposals) {
-    const { verified, note } = await verifyFlow(gp, { baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs });
+    const { flow: finalFlow, verified, note } = await verifyWithCorrection(gp, client, {
+      baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs,
+    });
     try {
-      await addFlow(app.id, gp, 'proposed', { verified, verificationNote: note ?? null, source: 'described' });
-      lines.push(`  • ${gp.name} — ${verified ? '✅ verified' : `⚠️ unverified (${note})`}`);
+      await addFlow(app.id, finalFlow, 'proposed', { verified, verificationNote: note ?? null, source: 'described' });
+      lines.push(`  • ${finalFlow.name} — ${verified ? '✅ verified' : `⚠️ unverified (${note})`}`);
     } catch (e) {
-      if ((e as { code?: string }).code === '23505') lines.push(`  • ${gp.name} — skipped (already exists)`);
+      if ((e as { code?: string }).code === '23505') lines.push(`  • ${finalFlow.name} — skipped (already exists)`);
       else throw e;
     }
   }
@@ -143,15 +146,15 @@ export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise
   await deleteProposedFlows(app.id);
   const lines: string[] = [`Mapped ${appName}: ${proposals.length} proposed flow(s).`];
   for (const gp of proposals) {
-    const { verified, note } = await verifyFlow(gp, {
+    const { flow: finalFlow, verified, note } = await verifyWithCorrection(gp, client, {
       baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs,
     });
     try {
-      await addFlow(app.id, gp, 'proposed', { verified, verificationNote: note ?? null, source: 'mapped' });
+      await addFlow(app.id, finalFlow, 'proposed', { verified, verificationNote: note ?? null, source: 'mapped' });
       const mark = verified ? '✅ verified' : `⚠️ unverified (${note})`;
-      lines.push(`  • ${gp.name} (${gp.steps.length} steps) — ${mark}`);
+      lines.push(`  • ${finalFlow.name} (${finalFlow.steps.length} steps) — ${mark}`);
     } catch (e) {
-      if ((e as { code?: string }).code === '23505') lines.push(`  • ${gp.name} — skipped (already exists on ${appName})`);
+      if ((e as { code?: string }).code === '23505') lines.push(`  • ${finalFlow.name} — skipped (already exists on ${appName})`);
       else throw e;
     }
   }
