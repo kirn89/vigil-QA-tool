@@ -55,7 +55,7 @@ describe('verifyWithCorrection', () => {
     expect(res.note).toBeUndefined();
   });
 
-  it('keeps it unverified (no LLM call) when the flow already passes', async () => {
+  it('returns verified with no LLM call when the flow already passes', async () => {
     const good = goldenPathSchema.parse({
       name: 'about', steps: [
         { id: 's1', action: { kind: 'goto', path: '/about' } },
