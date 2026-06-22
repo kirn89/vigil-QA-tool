@@ -6,9 +6,24 @@ const SLOW_FLOOR_MS = 3_000;
 const SLOW_FACTOR = 3;
 const HISTORY_SWEEPS = 7;
 
+/** Strip volatile bits from finding evidence so the SAME logical error hashes
+ *  identically across sweeps. Vibe-coded SPAs (Next.js/v0) re-hash their webpack
+ *  chunk filenames and shift line:col on every deploy, so an un-normalized
+ *  fingerprint changes each sweep and the two-sweep confirmation gate never fires
+ *  for a persistent error. We keep the human-readable message (which actually
+ *  differentiates errors) and drop only the rotating chunk hash + line:col. The
+ *  full, un-normalized evidence is still stored for the user to see. */
+function normalizeEvidence(evidence: string): string {
+  return evidence
+    .replace(/chunks\/[^/\s:]+\.js/gi, 'chunks/_.js') // hashed webpack chunk filename
+    .replace(/:\d+:\d+/g, '')                          // stack-frame line:col
+    .trim()
+    .slice(0, 200);
+}
+
 function fingerprint(f: SweepFinding): string {
   // Normalize evidence so the same logical finding hashes identically across sweeps
-  const evidenceKey = f.kind === 'slow' ? '' : f.evidence.slice(0, 200);
+  const evidenceKey = f.kind === 'slow' ? '' : normalizeEvidence(f.evidence);
   return createHash('sha256').update(`${f.kind}|${f.pageUrl}|${evidenceKey}`).digest('hex');
 }
 

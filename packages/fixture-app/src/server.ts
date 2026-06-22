@@ -59,6 +59,14 @@ export function createFixtureApp() {
   app.get('/blank', (_req, res) =>
     res.send('<!doctype html><html><head><title>.</title></head><body></body></html>'));
 
+  // Simulates a client-rendered SPA: the body is empty at the `load` event and a
+  // script injects the real content shortly after (like React/Next hydration).
+  // A sweep must wait for hydration before judging the page rendered.
+  app.get('/hydrate', (_req, res) =>
+    res.send(`<!doctype html><html><head><title>Hydrate</title><style>body{font:16px sans-serif}</style></head><body><div id="root"></div>
+      <script>setTimeout(function(){document.getElementById('root').innerHTML='<main><h1>Loaded</h1><p>This content rendered on the client after load.</p></main>';},150)</script>
+    </body></html>`));
+
   app.get('/items', (_req, res) =>
     res.send(page('Items', `<h1>Items</h1>
       <form method="post" action="/items">
