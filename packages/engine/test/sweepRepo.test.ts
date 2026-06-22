@@ -72,6 +72,32 @@ describe('sweep persistence', () => {
     expect(await confirmedFindings(appId)).toHaveLength(1);
   });
 
+  it('confirms a console error whose stack-frame chunk hash rotates between sweeps', async () => {
+    // Real-world (scholarai): the SAME logical error re-hashes its webpack chunk
+    // filename + line:col on every deploy. Without evidence normalization the
+    // fingerprint changes each sweep and the two-sweep gate never fires.
+    const err = (chunk: string, line: number, col: number): SweepResult => ({
+      pages: clean.pages,
+      findings: [{
+        pageUrl: 'http://x.test/',
+        kind: 'console_error',
+        evidence: `[v0] Failed to load stored data: TypeError: Failed to fetch\n    at http://x.test/_next/static/chunks/${chunk}.js:${line}:${col}`,
+      }],
+    });
+    await recordSweep(appId, err('16gghizyx7syq', 7, 24180));
+    await recordSweep(appId, err('0ilr7ujevta2m', 7, 25211)); // same error, rotated hash/col
+    const confirmed = await confirmedFindings(appId);
+    expect(confirmed.filter((f) => f.kind === 'console_error')).toHaveLength(1);
+  });
+
+  it('does not collapse two genuinely different console errors into one fingerprint', async () => {
+    const a: SweepResult = { pages: clean.pages, findings: [{ pageUrl: 'http://x.test/', kind: 'console_error', evidence: 'TypeError: Failed to fetch\n    at http://x.test/_next/static/chunks/aaa111.js:7:10' }] };
+    const b: SweepResult = { pages: clean.pages, findings: [{ pageUrl: 'http://x.test/', kind: 'console_error', evidence: 'ReferenceError: foo is not defined\n    at http://x.test/_next/static/chunks/bbb222.js:7:10' }] };
+    await recordSweep(appId, a);
+    await recordSweep(appId, b); // different message → streak should NOT carry over
+    expect(await confirmedFindings(appId)).toEqual([]);
+  });
+
   it('duplicate findings within one sweep do not fake a two-sweep confirmation', async () => {
     const dup: SweepResult = {
       pages: clean.pages,

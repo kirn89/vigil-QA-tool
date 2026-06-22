@@ -58,6 +58,15 @@ describe('sweepSite', () => {
     expect(blank).toBeTruthy();
   });
 
+  it('does not flag a client-rendered (SPA) page that hydrates after load as unrendered', async () => {
+    // /hydrate is empty at the `load` event and fills in ~150ms later via script.
+    // Without waiting for hydration the crawler false-alarms (the scholarai/settlenepal
+    // auth pages did exactly this). It must give the client a moment to render.
+    const result = await sweepSite({ baseUrl: url, maxPages: 20, extraSeeds: ['/hydrate'] });
+    const falseAlarm = result.findings.find((f) => f.kind === 'unrendered' && f.pageUrl.endsWith('/hydrate'));
+    expect(falseAlarm).toBeFalsy();
+  });
+
   it('respects the page cap', async () => {
     const result = await sweepSite({ baseUrl: url, maxPages: 2 });
     expect(result.pages.length).toBeLessThanOrEqual(2);

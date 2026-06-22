@@ -17,6 +17,8 @@ export interface SweepOptions {
   loginFlow?: GoldenPath;
   credentials?: { email: string; password: string };
   pageTimeoutMs?: number;
+  /** how long to let a client-rendered page hydrate before judging it (default 3s) */
+  hydrationMs?: number;
 }
 
 const UNSAFE_WORDS = ['logout', 'log-out', 'signout', 'sign-out', 'delete', 'remove', 'destroy', 'archive', 'cancel', 'unsubscribe'];
@@ -53,6 +55,26 @@ function normalize(href: string, base: string): string | null {
   }
 }
 
+/** Give a client-rendered (SPA) page a moment to hydrate before we judge it.
+ *  Many vibe-coded apps (Next.js/v0) serve an empty <body> at the `load` event
+ *  and inject the real content client-side a beat later; checking immediately
+ *  produces false `unrendered` alarms (false alarms are the top product risk).
+ *  Resolves as soon as the page has meaningful content, or after the timeout
+ *  (a genuinely blank page never gains content and is then correctly flagged). */
+async function waitForHydration(page: import('playwright').Page, timeoutMs: number): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        const text = (document.body?.innerText ?? '').trim().length;
+        const structural = document.querySelectorAll('form, nav, main, article, section, [role="main"]').length;
+        return text >= 30 || structural > 0;
+      },
+      undefined,
+      { timeout: timeoutMs },
+    )
+    .catch(() => undefined);
+}
+
 async function checkPage(page: import('playwright').Page): Promise<{ brokenImages: string[]; unrendered: boolean }> {
   return page.evaluate(() => {
     const brokenImages = Array.from(document.images)
@@ -71,6 +93,7 @@ async function checkPage(page: import('playwright').Page): Promise<{ brokenImage
 export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
   const maxPages = opts.maxPages ?? 200;
   const timeout = opts.pageTimeoutMs ?? 20_000;
+  const hydrationMs = opts.hydrationMs ?? 3_000;
   const findings: SweepFinding[] = [];
   const pages: SweptPage[] = [];
 
@@ -126,6 +149,7 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
         if (status >= 400) {
           findings.push({ pageUrl: current, kind: 'dead_link', evidence: `HTTP ${status}` });
         } else {
+          await waitForHydration(page, hydrationMs); // let SPAs render before judging
           for (const e of consoleErrors) findings.push({ pageUrl: current, kind: 'console_error', evidence: e });
           for (const f of failedRequests) findings.push({ pageUrl: current, kind: 'failed_request', evidence: f });
           const { brokenImages, unrendered } = await checkPage(page);
