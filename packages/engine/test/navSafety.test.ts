@@ -27,4 +27,11 @@ describe('isUnsafeLabel', () => {
     expect(isUnsafeLabel('Senders')).toBe(false);      // "send" is not a whole word here
     expect(isUnsafeLabel('')).toBe(false);
   });
+
+  it('phrase matches are whole-word bounded, not substrings', () => {
+    expect(isUnsafeLabel('Log out')).toBe(true);
+    expect(isUnsafeLabel('Sign out')).toBe(true);
+    expect(isUnsafeLabel('sign outbox')).toBe(false);      // not a logout action
+    expect(isUnsafeLabel('log outgoing mail')).toBe(false); // not a logout action
+  });
 });

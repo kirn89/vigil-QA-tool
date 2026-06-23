@@ -8,13 +8,13 @@ const UNSAFE_LABEL_WORDS = [
   'order', 'confirm', 'logout', 'signout', 'logoff',
 ];
 
-const UNSAFE_LABEL_PHRASES = ['log out', 'sign out', 'log off'];
+const UNSAFE_PHRASE_RE = /\b(log\s+out|sign\s+out|log\s+off)\b/;
 
 /** True when a clickable control's accessible label looks destructive or
  *  outward-facing and therefore must not be clicked during route discovery. */
 export function isUnsafeLabel(label: string): boolean {
   const lower = label.toLowerCase();
-  if (UNSAFE_LABEL_PHRASES.some((p) => lower.includes(p))) return true;
+  if (UNSAFE_PHRASE_RE.test(lower)) return true;
   const words = lower.match(/[a-z]+/g) ?? [];
   return words.some((w) => UNSAFE_LABEL_WORDS.includes(w));
 }
