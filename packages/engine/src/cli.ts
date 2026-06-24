@@ -13,6 +13,7 @@ import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
 import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
 import { replayFlow } from './replay/executor.js';
+import { screenshotStoreFromEnv } from './replay/screenshotStore.js';
 import { runWithRetries } from './verdict/runWithRetries.js';
 import { sweepSite } from './sweep/crawler.js';
 import { closePool } from './db/pool.js';
@@ -201,6 +202,14 @@ export async function cmdReport(appName: string): Promise<{ lines: string[] }> {
   return { lines };
 }
 
+/** Deletes screenshots older than `days` from the configured store (the Supabase
+ *  bucket in prod, else the local artifacts dir). Intended for a nightly cron. */
+export async function cmdPruneScreenshots(opts: { days?: number; baseDir?: string } = {}): Promise<void> {
+  const days = opts.days ?? 14;
+  const deleted = await screenshotStoreFromEnv(opts.baseDir ?? 'artifacts').prune(days);
+  console.log(`Pruned ${deleted} screenshot(s) older than ${days} days`);
+}
+
 // ---- commander wiring (only runs when invoked as a script) ----
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const program = new Command().name('vigil');
@@ -231,6 +240,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (app, flow, o) => { await cmdFlowConfirm(app, flow, { force: o.force }); });
   program.command('report').argument('<app>')
     .action(async (app) => { await cmdReport(app); });
+  program.command('prune-screenshots')
+    .option('--days <n>', 'delete screenshots older than N days', '14')
+    .action(async (o) => { await cmdPruneScreenshots({ days: Number(o.days) }); });
   program.hook('postAction', async () => { await closePool(); });
   program.exitOverride();
   program.parseAsync().catch((e: unknown) => {

@@ -1,7 +1,6 @@
 import { chromium, type Page } from 'playwright';
-import { join } from 'node:path';
-import { mkdir } from 'node:fs/promises';
 import { interpolate, type GoldenPath, type InterpolationContext, type Step } from '../flows/goldenPath.js';
+import { screenshotStoreFromEnv, type ScreenshotStore } from './screenshotStore.js';
 
 export const VIGIL_USER_AGENT = 'Vigil-Check/0.1 (synthetic monitor; +https://vigil.invalid)';
 
@@ -27,6 +26,9 @@ export interface ReplayOptions {
   artifactsDir: string;
   runId: string;
   stepTimeoutMs?: number;
+  /** where step screenshots go; defaults to the env-selected store (Supabase in
+   *  prod when SUPABASE_* is set, else local disk at artifactsDir) */
+  screenshotStore?: ScreenshotStore;
 }
 
 async function executeStep(page: Page, step: Step, opts: ReplayOptions, ctx: InterpolationContext, timeout: number): Promise<void> {
@@ -64,19 +66,25 @@ export async function performSteps(
   const timeout = opts.stepTimeoutMs ?? 15_000;
   const ctx: InterpolationContext = { ...opts.credentials, runId: opts.runId };
   const results: StepResult[] = [];
-  await mkdir(opts.artifactsDir, { recursive: true });
+  const store = opts.screenshotStore ?? screenshotStoreFromEnv(opts.artifactsDir);
+
+  // Capture a screenshot and hand it to the store, returning the locator (local
+  // path or Supabase object path). Best-effort: a capture/upload failure must not
+  // fail the step itself.
+  const capture = async (step: Step): Promise<string | undefined> => {
+    const buf = await page.screenshot().catch(() => undefined);
+    if (!buf) return undefined;
+    return store.put(`${flow.name}-${opts.runId}-${step.id}.png`, buf).catch(() => undefined);
+  };
 
   for (const step of flow.steps) {
     const started = Date.now();
-    const screenshot = join(opts.artifactsDir, `${flow.name}-${opts.runId}-${step.id}.png`);
     try {
       await executeStep(page, step, opts, ctx, timeout);
-      await page.screenshot({ path: screenshot }).catch(() => undefined);
-      results.push({ stepId: step.id, status: 'ok', screenshot, durationMs: Date.now() - started });
+      results.push({ stepId: step.id, status: 'ok', screenshot: await capture(step), durationMs: Date.now() - started });
     } catch (err) {
-      await page.screenshot({ path: screenshot }).catch(() => undefined);
       results.push({
-        stepId: step.id, status: 'failed', screenshot,
+        stepId: step.id, status: 'failed', screenshot: await capture(step),
         error: err instanceof Error ? err.message : String(err),
         durationMs: Date.now() - started,
       });
