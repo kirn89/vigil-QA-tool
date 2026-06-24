@@ -75,11 +75,14 @@ export function createFixtureApp() {
     res.send(page('App', `<h1>App</h1>
       <button id="go" onclick="location.assign('/app/inside')">Open inbox</button>
       <button id="danger" onclick="location.assign('/app/deleted')">Delete account</button>
+      <button onclick="location.assign('/app/extra')">Open settings</button>
       <form action="/app/submit" method="post"><input name="x"><button type="submit">Send message</button></form>`)));
   app.get('/app/inside', (_req, res) =>
     res.send(page('Inbox', `<h1>Inbox</h1><p>Your messages live here. Everything looks fine.</p>`)));
   app.get('/app/deleted', (_req, res) =>
     res.send(page('Deleted', `<h1>account deleted</h1><p>this should never be reached by a sweep</p>`)));
+  app.get('/app/extra', (_req, res) =>
+    res.send(page('Settings', `<h1>Settings</h1><p>Settings page reached via a no-id nav button.</p>`)));
   app.post('/app/submit', (_req, res) => { submitHits++; res.send(page('Sent', `<h1>sent</h1>`)); });
   app.get('/__submit-hits', (_req, res) => res.json({ hits: submitHits }));
 

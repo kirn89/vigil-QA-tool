@@ -82,6 +82,8 @@ describe('sweepSite', () => {
     const result = await sweepSite({ baseUrl: url, maxPages: 30, navDiscovery: true });
     // capability: the inbox page, reachable only by clicking "Open inbox", is now swept
     expect(result.pages.some((p) => p.url.endsWith('/app/inside'))).toBe(true);
+    // the no-id "Open settings" button is reached via the :nth-match fallback selector
+    expect(result.pages.some((p) => p.url.endsWith('/app/extra'))).toBe(true);
     // safety: the "Delete account" button (destructive label) was never clicked
     expect(result.pages.some((p) => p.url.endsWith('/app/deleted'))).toBe(false);
     // safety: the form submit ("Send message") was never triggered

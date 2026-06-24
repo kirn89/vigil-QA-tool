@@ -103,7 +103,9 @@ interface NavCandidate { selector: string; label: string; }
  *  Returns a durable selector (#id preferred) the isolated probe can re-locate. */
 async function collectNavCandidates(page: import('playwright').Page, cap: number): Promise<NavCandidate[]> {
   const raw = await page.$$eval('button, [role="button"]', (els) =>
-    els.map((el) => {
+    els.map((el, i) => {
+      // inForm is the backstop for <button> elements with no explicit type= (HTML defaults them to submit,
+      // but getAttribute('type') returns null so isSubmit would be false); always exclude anything in a form.
       const inForm = !!el.closest('form');
       const isSubmit = (el.getAttribute('type') ?? '').toLowerCase() === 'submit';
       const id = el.getAttribute('id');
@@ -111,8 +113,8 @@ async function collectNavCandidates(page: import('playwright').Page, cap: number
       const label = ((el.textContent ?? '') || el.getAttribute('aria-label') || '').trim().slice(0, 60);
       let selector: string | null = null;
       if (id) selector = `#${CSS.escape(id)}`;
-      else if (name) selector = `[name="${name}"]`;
-      else if (label) selector = `text=${label}`; // Playwright text engine, exact-ish
+      else if (name) selector = `[name="${CSS.escape(name)}"]`;
+      else if (label) selector = `:nth-match(button, [role="button"], ${i + 1})`; // deterministic position; avoids fuzzy/ambiguous text match
       return { selector, label, inForm, isSubmit };
     }),
   );
