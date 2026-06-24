@@ -1,6 +1,7 @@
 import { chromium, type ConsoleMessage, type Response } from 'playwright';
 import { VIGIL_USER_AGENT, performSteps, type ReplayOptions } from '../replay/executor.js';
 import type { GoldenPath } from '../flows/goldenPath.js';
+import { isUnsafeLabel } from './navSafety.js';
 
 export type FindingKind = 'dead_link' | 'console_error' | 'failed_request' | 'broken_image' | 'unrendered' | 'slow';
 
@@ -19,6 +20,11 @@ export interface SweepOptions {
   pageTimeoutMs?: number;
   /** how long to let a client-rendered page hydrate before judging it (default 3s) */
   hydrationMs?: number;
+  /** opt-in: also reach pages behind client-side button/route nav by clicking
+   *  navigation-like controls to reveal their URL (default false — read-only/href-only) */
+  navDiscovery?: boolean;
+  /** cap on nav-click candidates probed per page when navDiscovery is on (default 12) */
+  maxNavCandidatesPerPage?: number;
 }
 
 const UNSAFE_WORDS = ['logout', 'log-out', 'signout', 'sign-out', 'delete', 'remove', 'destroy', 'archive', 'cancel', 'unsubscribe'];
@@ -90,10 +96,76 @@ async function checkPage(page: import('playwright').Page): Promise<{ brokenImage
   });
 }
 
+interface NavCandidate { selector: string; label: string; }
+
+/** Collect clickable controls that look like navigation (not actions). Excludes
+ *  anything inside a <form>, any type=submit control, and any destructive label.
+ *  Returns a durable selector (#id preferred) the isolated probe can re-locate. */
+async function collectNavCandidates(page: import('playwright').Page, cap: number): Promise<NavCandidate[]> {
+  const raw = await page.$$eval('button, [role="button"]', (els) =>
+    els.map((el, i) => {
+      // inForm is the backstop for <button> elements with no explicit type= (HTML defaults them to submit,
+      // but getAttribute('type') returns null so isSubmit would be false); always exclude anything in a form.
+      const inForm = !!el.closest('form');
+      const isSubmit = (el.getAttribute('type') ?? '').toLowerCase() === 'submit';
+      const id = el.getAttribute('id');
+      const name = el.getAttribute('name');
+      const label = ((el.textContent ?? '') || el.getAttribute('aria-label') || '').trim().slice(0, 60);
+      let selector: string | null = null;
+      if (id) selector = `#${CSS.escape(id)}`;
+      else if (name) selector = `[name="${CSS.escape(name)}"]`;
+      // deterministic position over the FULL button set (i indexes the unfiltered match set, so
+      // in-form/unsafe buttons keep their slots and the probe's same :nth-match lands on this element);
+      // avoids fuzzy/ambiguous text matching. Stable as long as the probe reload renders the same DOM order.
+      else if (label) selector = `:nth-match(button, [role="button"], ${i + 1})`;
+      return { selector, label, inForm, isSubmit };
+    }),
+  );
+  const out: NavCandidate[] = [];
+  for (const c of raw) {
+    if (!c.selector || c.inForm || c.isSubmit || !c.label) continue;
+    if (isUnsafeLabel(c.label)) continue;
+    out.push({ selector: c.selector, label: c.label });
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/** Click each candidate once in an ISOLATED page (re-navigating to the parent
+ *  first), and collect any new same-origin, non-unsafe URL the click revealed.
+ *  Clicking is used only to reveal a route — the page itself is swept later via goto. */
+async function discoverNavTargets(
+  context: import('playwright').BrowserContext,
+  parentUrl: string,
+  candidates: NavCandidate[],
+  timeout: number,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (const c of candidates) {
+    const probe = await context.newPage();
+    try {
+      await probe.goto(parentUrl, { waitUntil: 'load', timeout });
+      const before = probe.url();
+      await probe.click(c.selector, { timeout: 3_000 }).catch(() => undefined);
+      await probe.waitForURL((u) => u.toString() !== before, { timeout: 2_000 }).catch(() => undefined);
+      const after = probe.url();
+      if (after !== before) {
+        const n = normalize(after, parentUrl);
+        if (n && !isUnsafeHref(n)) found.push(n);
+      }
+    } finally {
+      await probe.close().catch(() => undefined);
+    }
+  }
+  return found;
+}
+
 export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
   const maxPages = opts.maxPages ?? 200;
   const timeout = opts.pageTimeoutMs ?? 20_000;
   const hydrationMs = opts.hydrationMs ?? 3_000;
+  const navDiscovery = opts.navDiscovery ?? false;
+  const maxNavCandidates = opts.maxNavCandidatesPerPage ?? 12;
   const findings: SweepFinding[] = [];
   const pages: SweptPage[] = [];
 
@@ -161,6 +233,14 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
           for (const href of hrefs) {
             const n = normalize(href, current);
             if (n && !visited.has(n) && !isUnsafeHref(n)) queue.push(n);
+          }
+
+          if (navDiscovery) {
+            const candidates = await collectNavCandidates(page, maxNavCandidates);
+            const revealed = await discoverNavTargets(context, current, candidates, timeout);
+            for (const n of revealed) {
+              if (!visited.has(n) && !isUnsafeHref(n)) queue.push(n);
+            }
           }
         }
       } catch (err) {

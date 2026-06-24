@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,8 @@ import { startFixture } from '@vigil/fixture-app';
 import { getPool, closePool } from '../src/db/pool.js';
 import { migrate } from '../src/db/migrate.js';
 import { cmdAppAdd, cmdFlowAdd, cmdCheck, cmdSweep, cmdReport } from '../src/cli.js';
+import * as crawler from '../src/sweep/crawler.js';
+import * as sweepRepo from '../src/db/sweepRepo.js';
 
 let server: Server;
 let url: string;
@@ -70,5 +72,19 @@ describe('vigil CLI', () => {
     const { lines } = await cmdReport('demo');
     expect(lines.join('\n')).toContain('dead_link');
     expect(lines.join('\n')).toContain('/gone');
+  });
+
+  it('refuses deep nav-discovery for an unsafe-listed app (settlenepal)', async () => {
+    // app named "settlenepal" must never have nav-discovery enabled, even with --deep
+    await cmdAppAdd({ name: 'settlenepal', url: 'http://127.0.0.1:4999', loginEmail: 'x@y.z', loginPassword: 'p' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const sweep = vi.spyOn(crawler, 'sweepSite').mockResolvedValue({ pages: [], findings: [] });
+    const recordSpy = vi.spyOn(sweepRepo, 'recordSweep').mockResolvedValue('test-sweep-id');
+    await cmdSweep('settlenepal', { deep: true });
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/deep nav-discovery disabled/i);
+    expect(sweep.mock.calls[0]?.[0]?.navDiscovery).toBe(false);
+    warn.mockRestore();
+    sweep.mockRestore();
+    recordSpy.mockRestore();
   });
 });

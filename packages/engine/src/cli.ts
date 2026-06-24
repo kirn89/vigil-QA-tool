@@ -19,6 +19,10 @@ import { closePool } from './db/pool.js';
 
 const FOUNDER_EMAIL = process.env.VIGIL_USER_EMAIL ?? 'founder@vigil.local';
 
+// Apps where clicking controls is unsafe (e.g. a "send proposal" button on a
+// matrimony app). Deep nav-discovery is force-disabled for these regardless of --deep.
+const UNSAFE_NAV_APPS = new Set(['settlenepal']);
+
 async function requireApp(name: string): Promise<AppRecord> {
   const userId = await ensureUser(FOUNDER_EMAIL);
   const app = await getAppByName(userId, name);
@@ -120,13 +124,18 @@ export async function cmdCheck(appName: string, opts: CheckOptions = {}): Promis
   return { exitCode: anyBroken ? 1 : 0, lines };
 }
 
-export async function cmdSweep(appName: string): Promise<void> {
+export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): Promise<void> {
   const app = await requireApp(appName);
   const flows = await listConfirmedFlows(app.id);
   const loginFlow = flows.find((f) => f.goldenPath.name.toLowerCase() === 'login')?.goldenPath;
+  let navDiscovery = opts.deep ?? false;
+  if (navDiscovery && UNSAFE_NAV_APPS.has(app.name)) {
+    console.warn(`deep nav-discovery disabled for "${app.name}" (clicking controls is unsafe here)`);
+    navDiscovery = false;
+  }
   const result = await sweepSite({
     baseUrl: app.productionUrl, maxPages: 200,
-    loginFlow, credentials: app.credentials ?? undefined,
+    loginFlow, credentials: app.credentials ?? undefined, navDiscovery,
   });
   await recordSweep(app.id, result);
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
@@ -214,7 +223,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = exitCode;
     });
   program.command('sweep').argument('<app>')
-    .action(async (app) => { await cmdSweep(app); });
+    .option('--deep', 'also reach pages behind client-side button/route navigation (off for unsafe apps)')
+    .action(async (app, o) => { await cmdSweep(app, { deep: !!o.deep }); });
   program.command('map').argument('<app>')
     .action(async (app) => { await cmdMap(app); });
   program.command('flow:confirm').argument('<app>').argument('<flow>').option('--force')
