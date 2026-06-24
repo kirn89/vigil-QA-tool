@@ -13,6 +13,7 @@ const OK_PNG = Buffer.from(
 
 export function createFixtureApp() {
   const broken = new Set<Breakable>();
+  let submitHits = 0; // canary: must stay 0 — nav discovery must never submit forms
   const app = express();
   app.use(express.urlencoded({ extended: false }));
 
@@ -27,14 +28,14 @@ export function createFixtureApp() {
     broken.add(feature as Breakable);
     res.sendStatus(204);
   });
-  app.post('/__reset', (_req, res) => { broken.clear(); res.sendStatus(204); });
+  app.post('/__reset', (_req, res) => { broken.clear(); submitHits = 0; res.sendStatus(204); });
   app.get('/__echo-ua', (req, res) => { res.json({ ua: req.headers['user-agent'] ?? '' }); });
 
   app.get('/', (_req, res) => {
     const navHref = broken.has('nav-link') ? '/gone' : '/about';
     const script = broken.has('console-error') ? '<script>console.error("boom from fixture")</script>' : '';
     res.send(page('Home', `<h1>Demo App</h1>
-      <nav><a href="/login">Login</a> <a href="${navHref}">About</a> <a href="/contact">Contact</a></nav>${script}`));
+      <nav><a href="/login">Login</a> <a href="${navHref}">About</a> <a href="/contact">Contact</a> <a href="/app">App</a></nav>${script}`));
   });
 
   app.get('/login', (_req, res) =>
@@ -66,6 +67,21 @@ export function createFixtureApp() {
     res.send(`<!doctype html><html><head><title>Hydrate</title><style>body{font:16px sans-serif}</style></head><body><div id="root"></div>
       <script>setTimeout(function(){document.getElementById('root').innerHTML='<main><h1>Loaded</h1><p>This content rendered on the client after load.</p></main>';},150)</script>
     </body></html>`));
+
+  // SPA-style page: /app/inside is reachable ONLY by clicking the nav button
+  // (no <a href> points at it), so an href-only crawl misses it. The destructive
+  // button and the form submit are canaries: nav discovery must never trigger them.
+  app.get('/app', (_req, res) =>
+    res.send(page('App', `<h1>App</h1>
+      <button id="go" onclick="location.assign('/app/inside')">Open inbox</button>
+      <button id="danger" onclick="location.assign('/app/deleted')">Delete account</button>
+      <form action="/app/submit" method="post"><input name="x"><button type="submit">Send message</button></form>`)));
+  app.get('/app/inside', (_req, res) =>
+    res.send(page('Inbox', `<h1>Inbox</h1><p>Your messages live here. Everything looks fine.</p>`)));
+  app.get('/app/deleted', (_req, res) =>
+    res.send(page('Deleted', `<h1>account deleted</h1><p>this should never be reached by a sweep</p>`)));
+  app.post('/app/submit', (_req, res) => { submitHits++; res.send(page('Sent', `<h1>sent</h1>`)); });
+  app.get('/__submit-hits', (_req, res) => res.json({ hits: submitHits }));
 
   app.get('/items', (_req, res) =>
     res.send(page('Items', `<h1>Items</h1>

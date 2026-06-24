@@ -71,4 +71,21 @@ describe('sweepSite', () => {
     const result = await sweepSite({ baseUrl: url, maxPages: 2 });
     expect(result.pages.length).toBeLessThanOrEqual(2);
   });
+
+  it('without navDiscovery, misses a page reachable only by clicking a nav button', async () => {
+    const result = await sweepSite({ baseUrl: url, maxPages: 30 });
+    expect(result.pages.some((p) => p.url.endsWith('/app'))).toBe(true);          // reached via <a href>
+    expect(result.pages.some((p) => p.url.endsWith('/app/inside'))).toBe(false);  // button-only, missed
+  });
+
+  it('with navDiscovery, reaches the button-only page but never clicks destructive or submit controls', async () => {
+    const result = await sweepSite({ baseUrl: url, maxPages: 30, navDiscovery: true });
+    // capability: the inbox page, reachable only by clicking "Open inbox", is now swept
+    expect(result.pages.some((p) => p.url.endsWith('/app/inside'))).toBe(true);
+    // safety: the "Delete account" button (destructive label) was never clicked
+    expect(result.pages.some((p) => p.url.endsWith('/app/deleted'))).toBe(false);
+    // safety: the form submit ("Send message") was never triggered
+    const { hits } = await (await fetch(`${url}/__submit-hits`)).json();
+    expect(hits).toBe(0);
+  });
 });
