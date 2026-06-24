@@ -1,0 +1,14 @@
+# Vigil engine on a VPS. The container is ephemeral — the host cron invokes
+#   docker compose run --rm engine
+# once a night (default command = `vigil nightly`), and it exits when done.
+# Secrets come from deploy/.env (copy ../packages/engine/.env.example, fill in
+# Supabase + OpenRouter). Compose injects them as real env vars, so the engine
+# reads them from process.env — no .env file needs to exist inside the image.
+services:
+  engine:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: vigil-engine
+    env_file: .env
+    restart: "no"
