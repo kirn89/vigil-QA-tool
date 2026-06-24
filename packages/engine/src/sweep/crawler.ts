@@ -114,7 +114,10 @@ async function collectNavCandidates(page: import('playwright').Page, cap: number
       let selector: string | null = null;
       if (id) selector = `#${CSS.escape(id)}`;
       else if (name) selector = `[name="${CSS.escape(name)}"]`;
-      else if (label) selector = `:nth-match(button, [role="button"], ${i + 1})`; // deterministic position; avoids fuzzy/ambiguous text match
+      // deterministic position over the FULL button set (i indexes the unfiltered match set, so
+      // in-form/unsafe buttons keep their slots and the probe's same :nth-match lands on this element);
+      // avoids fuzzy/ambiguous text matching. Stable as long as the probe reload renders the same DOM order.
+      else if (label) selector = `:nth-match(button, [role="button"], ${i + 1})`;
       return { selector, label, inForm, isSubmit };
     }),
   );

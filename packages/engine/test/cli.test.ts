@@ -79,7 +79,7 @@ describe('vigil CLI', () => {
     await cmdAppAdd({ name: 'settlenepal', url: 'http://127.0.0.1:4999', loginEmail: 'x@y.z', loginPassword: 'p' });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const sweep = vi.spyOn(crawler, 'sweepSite').mockResolvedValue({ pages: [], findings: [] });
-    const recordSpy = vi.spyOn(sweepRepo, 'recordSweep').mockResolvedValue(undefined);
+    const recordSpy = vi.spyOn(sweepRepo, 'recordSweep').mockResolvedValue('test-sweep-id');
     await cmdSweep('settlenepal', { deep: true });
     expect(warn.mock.calls.flat().join(' ')).toMatch(/deep nav-discovery disabled/i);
     expect(sweep.mock.calls[0]?.[0]?.navDiscovery).toBe(false);
