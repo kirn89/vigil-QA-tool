@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,5 +70,14 @@ describe('vigil CLI', () => {
     const { lines } = await cmdReport('demo');
     expect(lines.join('\n')).toContain('dead_link');
     expect(lines.join('\n')).toContain('/gone');
+  });
+
+  it('refuses deep nav-discovery for an unsafe-listed app (settlenepal)', async () => {
+    // app named "settlenepal" must never have nav-discovery enabled, even with --deep
+    await cmdAppAdd({ name: 'settlenepal', url: 'http://127.0.0.1:4999', loginEmail: 'x@y.z', loginPassword: 'p' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await cmdSweep('settlenepal', { deep: true });
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/deep nav-discovery disabled/i);
+    warn.mockRestore();
   });
 });
