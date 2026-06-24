@@ -28,6 +28,14 @@ export async function createApp(input: {
   return { id: rows[0]!.id, ...input };
 }
 
+/** Every app across all users — the nightly watcher iterates this. Single-tenant
+ *  for now; multi-tenant scheduling would filter/shard this later. */
+export async function listAllApps(): Promise<Array<{ id: string; name: string }>> {
+  const { rows } = await getPool().query<{ id: string; name: string }>(
+    'select id, name from apps order by name');
+  return rows;
+}
+
 export async function getAppByName(userId: string, name: string): Promise<AppRecord | null> {
   const { rows } = await getPool().query<{ id: string; user_id: string; name: string; production_url: string; preview_url: string | null; credentials_encrypted: string | null }>(
     `select id, user_id, name, production_url, preview_url, credentials_encrypted

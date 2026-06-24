@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureUser, createApp, getAppByName, type AppRecord } from './db/appsRepo.js';
+import { ensureUser, createApp, getAppByName, listAllApps, type AppRecord } from './db/appsRepo.js';
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
 import { goldenPathSchema } from './flows/goldenPath.js';
 import { MapSession } from './map/browserTools.js';
@@ -210,6 +210,34 @@ export async function cmdPruneScreenshots(opts: { days?: number; baseDir?: strin
   console.log(`Pruned ${deleted} screenshot(s) older than ${days} days`);
 }
 
+/** Injectable so the orchestration is testable without a browser/DB. */
+export interface NightlyDeps {
+  listApps: () => Promise<Array<{ name: string }>>;
+  check: (name: string) => Promise<unknown>;
+  sweep: (name: string) => Promise<unknown>;
+  prune: () => Promise<unknown>;
+}
+
+/** The nightly watch the cron runs: replay every app's confirmed flows + sweep
+ *  every app, then prune old screenshots. Each app is isolated in try/catch so one
+ *  broken app never aborts the rest; failures are logged, not swallowed. */
+export async function cmdNightly(deps: Partial<NightlyDeps> = {}): Promise<void> {
+  const listApps = deps.listApps ?? listAllApps;
+  const check = deps.check ?? ((name: string) => cmdCheck(name));
+  const sweep = deps.sweep ?? ((name: string) => cmdSweep(name));
+  const prune = deps.prune ?? (() => cmdPruneScreenshots({}));
+  const fail = (lane: string, name: string, e: unknown) =>
+    console.error(`nightly ${lane} failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
+
+  const apps = await listApps();
+  console.log(`Nightly run: ${apps.length} app(s)`);
+  for (const app of apps) {
+    try { await check(app.name); } catch (e) { fail('check', app.name, e); }
+    try { await sweep(app.name); } catch (e) { fail('sweep', app.name, e); }
+  }
+  await prune();
+}
+
 // ---- commander wiring (only runs when invoked as a script) ----
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const program = new Command().name('vigil');
@@ -243,6 +271,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   program.command('prune-screenshots')
     .option('--days <n>', 'delete screenshots older than N days', '14')
     .action(async (o) => { await cmdPruneScreenshots({ days: Number(o.days) }); });
+  program.command('nightly')
+    .description('check + sweep every app, then prune old screenshots (for the cron)')
+    .action(async () => { await cmdNightly(); });
   program.hook('postAction', async () => { await closePool(); });
   program.exitOverride();
   program.parseAsync().catch((e: unknown) => {

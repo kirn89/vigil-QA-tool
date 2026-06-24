@@ -1,0 +1,12 @@
+# Keep the Docker build context small and free of host-only state.
+**/node_modules
+**/dist
+.git
+.pgdata*
+artifacts
+.playwright-mcp
+.claude
+.claire
+flows-private
+**/.env
+**/*.log

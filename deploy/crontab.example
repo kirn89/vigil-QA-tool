@@ -1,0 +1,6 @@
+# Vigil nightly watch — install on the VPS with `crontab -e` (or drop in /etc/cron.d).
+# Runs check + sweep for every app, then prunes old screenshots. Adjust the path
+# (/opt/vigil) and the hour to your server's timezone.
+
+# At 03:00 every day: run the nightly watch, append output to a log.
+0 3 * * * cd /opt/vigil && /usr/bin/docker compose -f deploy/docker-compose.yml run --rm engine >> /var/log/vigil-nightly.log 2>&1
