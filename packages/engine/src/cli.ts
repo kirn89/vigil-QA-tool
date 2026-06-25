@@ -226,6 +226,7 @@ export async function cmdJourneysSelect(appName: string, ids: string[], opts: Se
   for (const id of ids) {
     const candidate = await getCandidate(app.id, id);
     if (!candidate) { lines.push(`✗ ${id} — no such candidate`); continue; }
+    if (candidate.status === 'authored') { lines.push(`• ${candidate.name} — already watched, skipping`); continue; }
     await setCandidateStatus(app.id, id, 'selected');
     const res = await authorCandidate(app, candidate, client, opts);
     if (res.verified) {

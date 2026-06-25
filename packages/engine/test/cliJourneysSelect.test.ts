@@ -66,6 +66,20 @@ describe('cmdJourneysSelect', () => {
     expect((await listCandidates(id))[0]!.status).toBe('needs_info');
   });
 
+  it('skips a candidate that is already authored without calling the LLM or browser', async () => {
+    await cmdAppAdd({ name: 'demo', url });
+    const id = await appId();
+    await upsertCandidates(id, [{ name: 'checkout', entryUrl: `${url}/checkout`, recommended: true }]);
+    const candidateId = (await listCandidates(id))[0]!.id;
+    await setCandidateStatus(id, candidateId, 'authored');
+
+    // FakeLLMClient([]) throws if any LLM call is made — so if this resolves the skip guard worked.
+    const { lines } = await cmdJourneysSelect('demo', [candidateId], { client: new FakeLLMClient([]) });
+
+    expect(lines.join('\n')).toContain('already watched');
+    expect((await listCandidates(id))[0]!.status).toBe('authored');
+  });
+
   it('rejects selections that exceed the quota before authoring', async () => {
     await cmdAppAdd({ name: 'demo', url });
     const id = await appId();
