@@ -103,7 +103,7 @@ const EMPTY_SIGNALS: PageSignals = { hasForm: false, inputCount: 0, actionButton
 async function collectSignals(page: import('playwright').Page): Promise<PageSignals> {
   return page.evaluate(() => ({
     hasForm: document.querySelectorAll('form').length > 0,
-    inputCount: document.querySelectorAll('input, textarea, select').length,
+    inputCount: document.querySelectorAll('input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="hidden"]), textarea, select').length,
     actionButtonCount: document.querySelectorAll('button, [role="button"], input[type="submit"]').length,
     hasPasswordField: document.querySelectorAll('input[type="password"]').length > 0,
   }));
