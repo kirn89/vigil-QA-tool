@@ -157,7 +157,8 @@ export async function cmdJourneys(appName: string, opts: JourneysCliOptions = {}
   const pages = (await latestSweepPages(app.id)).filter((p) => p.httpStatus >= 200 && p.httpStatus < 400);
   if (pages.length === 0) throw new Error(`No swept pages for "${appName}". Run: vigil sweep ${appName}`);
 
-  const candidates = await classifyJourneys(pages.map((p) => ({ url: p.url, signals: p.signals })), client);
+  const classified = await classifyJourneys(pages.map((p) => ({ url: p.url, signals: p.signals })), client);
+  const candidates = classified.filter((c) => c.depth === 'deep');
   await upsertCandidates(app.id, candidates.map((c) => ({
     name: c.name, entryUrl: c.entryUrl, recommended: c.recommended, feasibilityHint: c.feasibilityHint,
   })));
