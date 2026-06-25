@@ -11,18 +11,25 @@ import { verifyFlow } from './map/verify.js';
 import { verifyWithCorrection } from './map/correct.js';
 import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
-import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
+import { recordSweep, confirmedFindings, latestSweepPages } from './db/sweepRepo.js';
 import { replayFlow } from './replay/executor.js';
 import { screenshotStoreFromEnv } from './replay/screenshotStore.js';
 import { runWithRetries } from './verdict/runWithRetries.js';
 import { sweepSite } from './sweep/crawler.js';
 import { closePool } from './db/pool.js';
+import { classifyJourneys } from './journeys/classify.js';
+import {
+  upsertCandidates, listCandidates, getCandidate, setCandidateStatus, countAuthoredCandidates,
+  type CandidateRecord,
+} from './db/candidatesRepo.js';
 
 const FOUNDER_EMAIL = process.env.VIGIL_USER_EMAIL ?? 'founder@vigil.local';
 
 // Apps where clicking controls is unsafe (e.g. a "send proposal" button on a
 // matrimony app). Deep nav-discovery is force-disabled for these regardless of --deep.
 const UNSAFE_NAV_APPS = new Set(['settlenepal']);
+
+const QUOTA = 8; // max confirmed deep flows per app (spec §3.6)
 
 async function requireApp(name: string): Promise<AppRecord> {
   const userId = await ensureUser(FOUNDER_EMAIL);
@@ -140,6 +147,32 @@ export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): 
   });
   await recordSweep(app.id, result);
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
+}
+
+export interface JourneysCliOptions { client?: LLMClient; }
+
+export async function cmdJourneys(appName: string, opts: JourneysCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const pages = (await latestSweepPages(app.id)).filter((p) => p.httpStatus >= 200 && p.httpStatus < 400);
+  if (pages.length === 0) throw new Error(`No swept pages for "${appName}". Run: vigil sweep ${appName}`);
+
+  const candidates = await classifyJourneys(pages.map((p) => ({ url: p.url, signals: p.signals })), client);
+  await upsertCandidates(app.id, candidates.map((c) => ({
+    name: c.name, entryUrl: c.entryUrl, recommended: c.recommended, feasibilityHint: c.feasibilityHint,
+  })));
+
+  const all = await listCandidates(app.id);
+  const authored = await countAuthoredCandidates(app.id);
+  const lines = [`${appName}: ${all.length} deep journey candidate(s); ${authored}/${QUOTA} watched. ★ = recommended, ⚠ = needs setup.`];
+  for (const c of all) {
+    const star = c.recommended ? '★' : ' ';
+    const warn = c.feasibilityHint ? `  ⚠ ${c.feasibilityHint}` : '';
+    lines.push(`${star} [${c.status}] ${c.id}  ${c.name}  → ${c.entryUrl}${warn}`);
+  }
+  lines.push(`Select up to ${QUOTA}: vigil journeys:select ${appName} <id> [<id> ...]`);
+  for (const l of lines) console.log(l);
+  return { lines };
 }
 
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
