@@ -71,7 +71,8 @@ export async function classifyJourneys(pages: ClassifierPage[], client: LLMClien
   }
   if (input === undefined) return [];
 
-  const journeys = (input as { journeys?: unknown[] }).journeys ?? [];
+  const raw = (input as { journeys?: unknown }).journeys;
+  const journeys = Array.isArray(raw) ? raw : [];
   const out: JourneyCandidate[] = [];
   for (const raw of journeys) {
     const parsed = candidateSchema.safeParse(raw);

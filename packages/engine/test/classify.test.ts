@@ -1,24 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { classifyAttempts } from '../src/verdict/classify.js';
-import type { FlowAttempt } from '../src/replay/executor.js';
+import { classifyJourneys } from '../src/journeys/classify.js';
+import { FakeLLMClient, type LLMResponse } from '../src/map/llmClient.js';
+import type { PageSignals } from '../src/sweep/crawler.js';
 
-const completed: FlowAttempt = { outcome: 'completed', steps: [], consoleErrors: [] };
-const failedAt = (id: string): FlowAttempt => ({ outcome: 'failed_step', failedStepId: id, steps: [], consoleErrors: [] });
-const crashed: FlowAttempt = { outcome: 'crashed', steps: [], consoleErrors: [], error: 'browser died' };
+const sig = (over: Partial<PageSignals> = {}): PageSignals =>
+  ({ hasForm: false, inputCount: 0, actionButtonCount: 0, hasPasswordField: false, ...over });
 
-describe('classifyAttempts', () => {
-  it('PASS if any attempt completed', () => {
-    expect(classifyAttempts([failedAt('s5'), completed]).verdict).toBe('pass');
+describe('classifyJourneys', () => {
+  it('returns only deep candidates, preserving recommended + hint', async () => {
+    const script: LLMResponse[] = [{
+      stopReason: 'tool_use',
+      content: [{
+        type: 'tool_use', id: 't1', name: 'classify_journeys',
+        input: { journeys: [
+          { name: 'Login', entryUrl: 'http://x/login', depth: 'deep', recommended: true, feasibilityHint: 'needs a test login' },
+          { name: 'About', entryUrl: 'http://x/about', depth: 'shallow', recommended: false },
+        ] },
+      }],
+    }];
+    const client = new FakeLLMClient(script);
+    const out = await classifyJourneys([
+      { url: 'http://x/login', signals: sig({ hasForm: true, inputCount: 2, hasPasswordField: true, actionButtonCount: 1 }) },
+      { url: 'http://x/about', signals: sig() },
+    ], client);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.name).toBe('Login');
+    expect(out[0]!.recommended).toBe(true);
+    expect(out[0]!.feasibilityHint).toBe('needs a test login');
+    expect(client.requests[0]!.messages[0]!.content[0]).toMatchObject({ type: 'text' });
   });
-  it('BROKEN when every attempt fails at the same step', () => {
-    const v = classifyAttempts([failedAt('s5'), failedAt('s5'), failedAt('s5')]);
-    expect(v.verdict).toBe('broken');
-    expect(v.failedStepId).toBe('s5');
-  });
-  it('UNSURE when attempts fail at different steps', () => {
-    expect(classifyAttempts([failedAt('s2'), failedAt('s5'), failedAt('s4')]).verdict).toBe('unsure');
-  });
-  it('UNSURE when attempts crash (might be us, not them)', () => {
-    expect(classifyAttempts([crashed, crashed, crashed]).verdict).toBe('unsure');
+
+  it('returns [] for no pages without calling the LLM', async () => {
+    const client = new FakeLLMClient([]); // would throw if called
+    expect(await classifyJourneys([], client)).toEqual([]);
   });
 });
