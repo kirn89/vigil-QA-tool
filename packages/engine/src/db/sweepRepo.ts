@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getPool } from './pool.js';
-import type { FindingKind, SweepFinding, SweepResult } from '../sweep/crawler.js';
+import type { FindingKind, PageSignals, SweepFinding, SweepResult } from '../sweep/crawler.js';
 
 const SLOW_FLOOR_MS = 3_000;
 const SLOW_FACTOR = 3;
@@ -44,8 +44,8 @@ export async function recordSweep(appId: string, result: SweepResult): Promise<s
 
   for (const p of result.pages) {
     await pool.query(
-      'insert into sweep_pages (sweep_id, url, http_status, load_ms) values ($1, $2, $3, $4) on conflict do nothing',
-      [sweepId, p.url, p.httpStatus, p.loadMs]);
+      'insert into sweep_pages (sweep_id, url, http_status, load_ms, signals) values ($1, $2, $3, $4, $5) on conflict do nothing',
+      [sweepId, p.url, p.httpStatus, p.loadMs, JSON.stringify(p.signals ?? {})]);
   }
 
   // Derive slow findings against each page's own history (excluding this sweep)
@@ -105,4 +105,26 @@ export async function confirmedFindings(appId: string): Promise<ConfirmedFinding
      where app_id = $1 and status = 'open' and consecutive_count >= 2
      order by first_seen`, [appId]);
   return rows.map((r) => ({ pageUrl: r.page_url, kind: r.kind, evidence: r.evidence, firstSeen: r.first_seen }));
+}
+
+export interface ClassifiablePage { url: string; httpStatus: number; signals: PageSignals; }
+
+/** Pages from the app's most recent sweep, with interaction signals normalized
+ *  to a full PageSignals (older rows stored '{}'). Used by the journey classifier. */
+export async function latestSweepPages(appId: string): Promise<ClassifiablePage[]> {
+  const { rows } = await getPool().query<{ url: string; http_status: number; signals: Partial<PageSignals> }>(
+    `select sp.url, sp.http_status, sp.signals from sweep_pages sp
+     join sweeps s on s.id = sp.sweep_id
+     where s.app_id = $1 and s.id = (select id from sweeps where app_id = $1 order by started_at desc limit 1)`,
+    [appId]);
+  return rows.map((r) => ({
+    url: r.url,
+    httpStatus: r.http_status,
+    signals: {
+      hasForm: !!r.signals.hasForm,
+      inputCount: r.signals.inputCount ?? 0,
+      actionButtonCount: r.signals.actionButtonCount ?? 0,
+      hasPasswordField: !!r.signals.hasPasswordField,
+    },
+  }));
 }
