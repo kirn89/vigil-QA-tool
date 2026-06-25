@@ -176,6 +176,74 @@ export async function cmdJourneys(appName: string, opts: JourneysCliOptions = {}
   return { lines };
 }
 
+/** Lazily author one candidate's executable steps via the targeted mapper, verify
+ *  it, and on success persist it as a confirmed flow. Returns the outcome; does not
+ *  mutate candidate status (the caller does, so select/author share this). */
+async function authorCandidate(
+  app: AppRecord, candidate: CandidateRecord, client: LLMClient,
+  opts: { maxSteps?: number; stepTimeoutMs?: number },
+): Promise<{ verified: boolean; note: string | null }> {
+  const session = new MapSession(app.productionUrl);
+  await session.start();
+  let proposals: Awaited<ReturnType<typeof mapApp>>;
+  try {
+    let path = candidate.entryUrl;
+    try { path = new URL(candidate.entryUrl).pathname; } catch { /* keep raw */ }
+    proposals = await mapApp(session, client, {
+      credentials: app.credentials ?? undefined,
+      maxSteps: opts.maxSteps,
+      targetJourney: `${candidate.name} (the journey starting at ${path})`,
+    });
+  } finally {
+    await session.close();
+  }
+  if (proposals.length === 0) return { verified: false, note: 'could not author steps' };
+
+  const { flow, verified, note } = await verifyWithCorrection(proposals[0]!, client, {
+    baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs,
+  });
+  if (!verified) return { verified: false, note: note ?? 'verification failed' };
+
+  try {
+    await addFlow(app.id, flow, 'confirmed', { verified: true, source: 'mapped' });
+  } catch (e) {
+    if ((e as { code?: string }).code !== '23505') throw e; // duplicate name → already watched, treat as authored
+  }
+  return { verified: true, note: null };
+}
+
+export interface SelectCliOptions extends JourneysCliOptions { maxSteps?: number; stepTimeoutMs?: number; }
+
+export async function cmdJourneysSelect(appName: string, ids: string[], opts: SelectCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const authored = await countAuthoredCandidates(app.id);
+  if (authored + ids.length > QUOTA) {
+    throw new Error(`Quota is ${QUOTA} deep flows; you have ${authored} and tried to add ${ids.length}. Pick fewer.`);
+  }
+
+  const lines: string[] = [];
+  for (const id of ids) {
+    const candidate = await getCandidate(app.id, id);
+    if (!candidate) { lines.push(`✗ ${id} — no such candidate`); continue; }
+    await setCandidateStatus(app.id, id, 'selected');
+    const res = await authorCandidate(app, candidate, client, opts);
+    if (res.verified) {
+      await setCandidateStatus(app.id, id, 'authored');
+      lines.push(`✅ ${candidate.name} — built & now watched`);
+    } else {
+      await setCandidateStatus(app.id, id, 'needs_info', res.note ?? undefined);
+      lines.push(`⚠ ${candidate.name} — needs info (${res.note}). Add details, then: vigil journeys:author ${appName} ${id}`);
+    }
+  }
+  for (const l of lines) console.log(l);
+  return { lines };
+}
+
+export async function cmdJourneysAuthor(appName: string, id: string, opts: SelectCliOptions = {}): Promise<{ lines: string[] }> {
+  return cmdJourneysSelect(appName, [id], opts);
+}
+
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
   const app = await requireApp(appName);
   const client = opts.client ?? new OpenRouterClient();
@@ -298,6 +366,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (app, o) => { await cmdSweep(app, { deep: !!o.deep }); });
   program.command('map').argument('<app>')
     .action(async (app) => { await cmdMap(app); });
+  program.command('journeys').argument('<app>')
+    .description('classify the latest sweep into selectable deep journeys')
+    .action(async (app) => { await cmdJourneys(app); });
+  program.command('journeys:select').argument('<app>').argument('<ids...>')
+    .description('author + watch the selected deep journeys (up to the quota)')
+    .action(async (app, ids) => { await cmdJourneysSelect(app, ids); });
+  program.command('journeys:author').argument('<app>').argument('<id>')
+    .description('retry authoring a needs-info journey after adding credentials')
+    .action(async (app, id) => { await cmdJourneysAuthor(app, id); });
   program.command('flow:confirm').argument('<app>').argument('<flow>').option('--force')
     .action(async (app, flow, o) => { await cmdFlowConfirm(app, flow, { force: o.force }); });
   program.command('report').argument('<app>')
