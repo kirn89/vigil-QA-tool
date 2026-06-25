@@ -90,4 +90,15 @@ describe('sweepSite', () => {
     const { hits } = await (await fetch(`${url}/__submit-hits`)).json();
     expect(hits).toBe(0);
   });
+
+  it('captures interaction signals per page (form/inputs/password/buttons)', async () => {
+    const result = await sweepSite({ baseUrl: url, maxPages: 20 });
+    const login = result.pages.find((p) => p.url.endsWith('/login'))!;
+    expect(login.signals?.hasForm).toBe(true);
+    expect(login.signals?.inputCount).toBeGreaterThanOrEqual(2);
+    expect(login.signals?.hasPasswordField).toBe(true);
+    expect(login.signals?.actionButtonCount).toBeGreaterThanOrEqual(1);
+    const about = result.pages.find((p) => p.url.endsWith('/about'))!;
+    expect(about.signals?.hasForm).toBe(false);
+  });
 });
