@@ -40,7 +40,7 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
   const { data: app } = await sb.from('apps').select('id,name').eq('id', appId).maybeSingle();
   if (!app) return null;
 
-  const storage = createServiceClient().storage;
+  let storage: ReturnType<typeof createServiceClient>['storage'] | undefined;
   const { data: flows } = await sb.from('flows').select('id,name').eq('app_id', appId).eq('status', 'confirmed').order('name');
   const flowVMs: FlowReportVM[] = [];
   for (const f of flows ?? []) {
@@ -53,7 +53,8 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
       const attempts = run.attempts as FlowAttempt[];
       const last = attempts[attempts.length - 1];
       const locators = (last?.steps ?? []).map((s) => s.screenshot).filter((x): x is string => !!x);
-      const signed = await Promise.all(locators.map((loc) => signedUrlFor(storage, loc)));
+      storage ??= createServiceClient().storage;
+      const signed = await Promise.all(locators.map((loc) => signedUrlFor(storage!, loc)));
       shots = signed.filter((u): u is string => !!u);
     }
     flowVMs.push({
