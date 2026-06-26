@@ -2,6 +2,7 @@
   "name": "@vigil/engine",
   "private": true,
   "type": "module",
+  "main": "src/index.ts",
   "scripts": {
     "test": "vitest run",
     "vigil": "tsx src/cli.ts",
