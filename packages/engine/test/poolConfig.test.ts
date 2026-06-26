@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildPoolConfig } from '../src/db/pool.js';
 
 describe('buildPoolConfig', () => {
+  // Isolate DATABASE_SSL from the ambient environment: buildPoolConfig falls back
+  // to process.env.DATABASE_SSL when no ssl arg is given, so a dev .env with
+  // DATABASE_SSL=true (e.g. for Supabase) would otherwise break the "default" case.
+  const savedSsl = process.env.DATABASE_SSL;
+  beforeEach(() => { delete process.env.DATABASE_SSL; });
+  afterEach(() => {
+    if (savedSsl === undefined) delete process.env.DATABASE_SSL;
+    else process.env.DATABASE_SSL = savedSsl;
+  });
+
   it('returns no ssl by default (local embedded Postgres needs none)', () => {
     const cfg = buildPoolConfig({ connectionString: 'postgres://localhost:54329/x', ssl: undefined });
     expect(cfg.connectionString).toBe('postgres://localhost:54329/x');
