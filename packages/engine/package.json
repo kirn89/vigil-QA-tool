@@ -2,7 +2,13 @@
   "name": "@vigil/engine",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
     "vigil": "tsx src/cli.ts",

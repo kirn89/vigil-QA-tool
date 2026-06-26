@@ -49,7 +49,7 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
       .eq('flow_id', f.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
 
     let shots: string[] = [];
-    if (run?.verdict === 'broken' && run.attempts) {
+    if (run?.verdict === 'broken' && Array.isArray(run.attempts)) {
       const attempts = run.attempts as FlowAttempt[];
       const last = attempts[attempts.length - 1];
       const locators = (last?.steps ?? []).map((s) => s.screenshot).filter((x): x is string => !!x);
