@@ -6,7 +6,8 @@ import { isUnsafeLabel } from './navSafety.js';
 export type FindingKind = 'dead_link' | 'console_error' | 'failed_request' | 'broken_image' | 'unrendered' | 'slow';
 
 export interface SweepFinding { pageUrl: string; kind: FindingKind; evidence: string; }
-export interface SweptPage { url: string; httpStatus: number; loadMs: number; }
+export interface PageSignals { hasForm: boolean; inputCount: number; actionButtonCount: number; hasPasswordField: boolean; }
+export interface SweptPage { url: string; httpStatus: number; loadMs: number; signals?: PageSignals; }
 export interface SweepResult { pages: SweptPage[]; findings: SweepFinding[]; }
 
 export interface SweepOptions {
@@ -94,6 +95,18 @@ async function checkPage(page: import('playwright').Page): Promise<{ brokenImage
     const unrendered = !hasStyles || (textLength < 30 && !hasInteractiveContent);
     return { brokenImages, unrendered };
   });
+}
+
+const EMPTY_SIGNALS: PageSignals = { hasForm: false, inputCount: 0, actionButtonCount: 0, hasPasswordField: false };
+
+/** Read-only interaction signals used later to classify deep vs shallow journeys. */
+async function collectSignals(page: import('playwright').Page): Promise<PageSignals> {
+  return page.evaluate(() => ({
+    hasForm: document.querySelectorAll('form').length > 0,
+    inputCount: document.querySelectorAll('input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="hidden"]), textarea, select').length,
+    actionButtonCount: document.querySelectorAll('button, [role="button"], input[type="submit"]').length,
+    hasPasswordField: document.querySelectorAll('input[type="password"]').length > 0,
+  }));
 }
 
 interface NavCandidate { selector: string; label: string; }
@@ -216,9 +229,10 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
         const response = await page.goto(current, { waitUntil: 'load', timeout });
         const loadMs = Date.now() - started;
         const status = response?.status() ?? 0;
-        pages.push({ url: current, httpStatus: status, loadMs });
+        let signals: PageSignals = EMPTY_SIGNALS;
 
         if (status >= 400) {
+          pages.push({ url: current, httpStatus: status, loadMs, signals });
           findings.push({ pageUrl: current, kind: 'dead_link', evidence: `HTTP ${status}` });
         } else {
           await waitForHydration(page, hydrationMs); // let SPAs render before judging
@@ -227,6 +241,8 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
           const { brokenImages, unrendered } = await checkPage(page);
           for (const src of brokenImages) findings.push({ pageUrl: current, kind: 'broken_image', evidence: src });
           if (unrendered) findings.push({ pageUrl: current, kind: 'unrendered', evidence: 'no stylesheet or fewer than 30 chars of visible text' });
+          signals = await collectSignals(page);
+          pages.push({ url: current, httpStatus: status, loadMs, signals });
 
           // Only enqueue links (<a href>), never click anything — sweep is read-only (spec §4.3.1)
           const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.getAttribute('href')!));
@@ -244,7 +260,7 @@ export async function sweepSite(opts: SweepOptions): Promise<SweepResult> {
           }
         }
       } catch (err) {
-        pages.push({ url: current, httpStatus: 0, loadMs: Date.now() - started });
+        pages.push({ url: current, httpStatus: 0, loadMs: Date.now() - started, signals: EMPTY_SIGNALS });
         findings.push({ pageUrl: current, kind: 'dead_link', evidence: err instanceof Error ? err.message : String(err) });
       } finally {
         page.off('console', onConsole);

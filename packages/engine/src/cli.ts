@@ -11,18 +11,25 @@ import { verifyFlow } from './map/verify.js';
 import { verifyWithCorrection } from './map/correct.js';
 import { OpenRouterClient, type LLMClient } from './map/llmClient.js';
 import { insertRun, latestVerdicts } from './db/runsRepo.js';
-import { recordSweep, confirmedFindings } from './db/sweepRepo.js';
+import { recordSweep, confirmedFindings, latestSweepPages } from './db/sweepRepo.js';
 import { replayFlow } from './replay/executor.js';
 import { screenshotStoreFromEnv } from './replay/screenshotStore.js';
 import { runWithRetries } from './verdict/runWithRetries.js';
 import { sweepSite } from './sweep/crawler.js';
 import { closePool } from './db/pool.js';
+import { classifyJourneys } from './journeys/classify.js';
+import {
+  upsertCandidates, listCandidates, getCandidate, setCandidateStatus, countAuthoredCandidates,
+  type CandidateRecord,
+} from './db/candidatesRepo.js';
 
 const FOUNDER_EMAIL = process.env.VIGIL_USER_EMAIL ?? 'founder@vigil.local';
 
 // Apps where clicking controls is unsafe (e.g. a "send proposal" button on a
 // matrimony app). Deep nav-discovery is force-disabled for these regardless of --deep.
 const UNSAFE_NAV_APPS = new Set(['settlenepal']);
+
+const QUOTA = 8; // max confirmed deep flows per app (spec §3.6)
 
 async function requireApp(name: string): Promise<AppRecord> {
   const userId = await ensureUser(FOUNDER_EMAIL);
@@ -140,6 +147,111 @@ export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): 
   });
   await recordSweep(app.id, result);
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
+}
+
+export interface JourneysCliOptions { client?: LLMClient; }
+
+export async function cmdJourneys(appName: string, opts: JourneysCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const pages = (await latestSweepPages(app.id)).filter((p) => p.httpStatus >= 200 && p.httpStatus < 400);
+  if (pages.length === 0) throw new Error(`No swept pages for "${appName}". Run: vigil sweep ${appName}`);
+
+  const classified = await classifyJourneys(pages.map((p) => ({ url: p.url, signals: p.signals })), client);
+  const candidates = classified.filter((c) => c.depth === 'deep');
+  await upsertCandidates(app.id, candidates.map((c) => ({
+    name: c.name, entryUrl: c.entryUrl, recommended: c.recommended, feasibilityHint: c.feasibilityHint,
+  })));
+
+  const all = await listCandidates(app.id);
+  const authored = await countAuthoredCandidates(app.id);
+  const lines = [`${appName}: ${all.length} deep journey candidate(s); ${authored}/${QUOTA} watched. ★ = recommended, ⚠ = needs setup.`];
+  for (const c of all) {
+    const star = c.recommended ? '★' : ' ';
+    const warn = c.feasibilityHint ? `  ⚠ ${c.feasibilityHint}` : '';
+    lines.push(`${star} [${c.status}] ${c.id}  ${c.name}  → ${c.entryUrl}${warn}`);
+  }
+  lines.push(`Select up to ${QUOTA}: vigil journeys:select ${appName} <id> [<id> ...]`);
+  for (const l of lines) console.log(l);
+  return { lines };
+}
+
+/** Lazily author one candidate's executable steps via the targeted mapper, verify
+ *  it, and on success persist it as a confirmed flow. Returns the outcome; does not
+ *  mutate candidate status (the caller does, so select/author share this). */
+async function authorCandidate(
+  app: AppRecord, candidate: CandidateRecord, client: LLMClient,
+  opts: { maxSteps?: number; stepTimeoutMs?: number },
+): Promise<{ verified: boolean; note: string | null }> {
+  const session = new MapSession(app.productionUrl);
+  await session.start();
+  let proposals: Awaited<ReturnType<typeof mapApp>>;
+  try {
+    let path = candidate.entryUrl;
+    try { path = new URL(candidate.entryUrl).pathname; } catch { /* keep raw */ }
+    proposals = await mapApp(session, client, {
+      credentials: app.credentials ?? undefined,
+      maxSteps: opts.maxSteps,
+      targetJourney: `${candidate.name} (the journey starting at ${path})`,
+    });
+  } finally {
+    await session.close();
+  }
+  if (proposals.length === 0) return { verified: false, note: 'could not author steps' };
+
+  const { flow, verified, note } = await verifyWithCorrection(proposals[0]!, client, {
+    baseUrl: app.productionUrl, credentials: app.credentials ?? undefined, stepTimeoutMs: opts.stepTimeoutMs,
+  });
+  if (!verified) return { verified: false, note: note ?? 'verification failed' };
+
+  try {
+    // Flow name comes from the authored GoldenPath, intentionally decoupled from candidate.name.
+    await addFlow(app.id, flow, 'confirmed', { verified: true, source: 'mapped' });
+  } catch (e) {
+    if ((e as { code?: string }).code !== '23505') throw e; // duplicate name → already watched, treat as authored
+  }
+  return { verified: true, note: null };
+}
+
+export interface SelectCliOptions extends JourneysCliOptions { maxSteps?: number; stepTimeoutMs?: number; }
+
+export async function cmdJourneysSelect(appName: string, ids: string[], opts: SelectCliOptions = {}): Promise<{ lines: string[] }> {
+  const app = await requireApp(appName);
+  const client = opts.client ?? new OpenRouterClient();
+  const authored = await countAuthoredCandidates(app.id);
+  const lines: string[] = [];
+
+  // Resolve first so the quota counts only ids that will actually create a flow
+  // (already-authored and unknown ids never add one).
+  const toAuthor: CandidateRecord[] = [];
+  for (const id of ids) {
+    const candidate = await getCandidate(app.id, id);
+    if (!candidate) { lines.push(`✗ ${id} — no such candidate`); continue; }
+    if (candidate.status === 'authored') { lines.push(`• ${candidate.name} — already watched, skipping`); continue; }
+    toAuthor.push(candidate);
+  }
+
+  if (authored + toAuthor.length > QUOTA) {
+    throw new Error(`Quota is ${QUOTA} deep flows; you have ${authored} and tried to add ${toAuthor.length}. Pick fewer.`);
+  }
+
+  for (const candidate of toAuthor) {
+    await setCandidateStatus(app.id, candidate.id, 'selected');
+    const res = await authorCandidate(app, candidate, client, opts);
+    if (res.verified) {
+      await setCandidateStatus(app.id, candidate.id, 'authored');
+      lines.push(`✅ ${candidate.name} — built & now watched`);
+    } else {
+      await setCandidateStatus(app.id, candidate.id, 'needs_info', res.note ?? undefined);
+      lines.push(`⚠ ${candidate.name} — needs info (${res.note}). Add details, then: vigil journeys:author ${appName} ${candidate.id}`);
+    }
+  }
+  for (const l of lines) console.log(l);
+  return { lines };
+}
+
+export async function cmdJourneysAuthor(appName: string, id: string, opts: SelectCliOptions = {}): Promise<{ lines: string[] }> {
+  return cmdJourneysSelect(appName, [id], opts);
 }
 
 export async function cmdMap(appName: string, opts: MapCliOptions = {}): Promise<{ lines: string[] }> {
@@ -264,6 +376,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     .action(async (app, o) => { await cmdSweep(app, { deep: !!o.deep }); });
   program.command('map').argument('<app>')
     .action(async (app) => { await cmdMap(app); });
+  program.command('journeys').argument('<app>')
+    .description('classify the latest sweep into selectable deep journeys')
+    .action(async (app) => { await cmdJourneys(app); });
+  program.command('journeys:select').argument('<app>').argument('<ids...>')
+    .description('author + watch the selected deep journeys (up to the quota)')
+    .action(async (app, ids) => { await cmdJourneysSelect(app, ids); });
+  program.command('journeys:author').argument('<app>').argument('<id>')
+    .description('retry authoring a needs-info journey after adding credentials')
+    .action(async (app, id) => { await cmdJourneysAuthor(app, id); });
   program.command('flow:confirm').argument('<app>').argument('<flow>').option('--force')
     .action(async (app, flow, o) => { await cmdFlowConfirm(app, flow, { force: o.force }); });
   program.command('report').argument('<app>')
