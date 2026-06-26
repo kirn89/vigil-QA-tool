@@ -14,7 +14,6 @@ async function hasAuthSchema(): Promise<boolean> {
   return rows.length > 0;
 }
 
-const maybe = { describe: describe.skip as typeof describe };
 let enabled = false;
 
 beforeAll(async () => {
@@ -25,8 +24,9 @@ beforeAll(async () => {
 afterAll(async () => { await pool?.end(); });
 
 // Seed two owners with one app each; assert each authenticated user sees only their own app.
-(enabled ? describe : describe.skip)('RLS isolation', () => {
-  it('an authenticated user reads only their own apps', async () => {
+describe('RLS isolation', () => {
+  it('an authenticated user reads only their own apps', async (ctx) => {
+    if (!enabled) { ctx.skip(); return; }
     const a = randomUUID(), b = randomUUID();
     const c = await pool!.connect();
     try {

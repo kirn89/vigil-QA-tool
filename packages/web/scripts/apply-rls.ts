@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const SQL_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'supabase');
 
-/** Applies every supabase/*.sql (idempotent) against the given connection. */
+/** Applies supabase/001_web_rls.sql (idempotent) against the given connection. */
 export async function applyRls(connectionString: string): Promise<void> {
   const ssl = (process.env.DATABASE_SSL ?? '').toLowerCase();
   const pool = new pg.Pool({ connectionString, ssl: ssl === 'true' || ssl === 'require' ? { rejectUnauthorized: false } : undefined });
