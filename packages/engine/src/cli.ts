@@ -205,6 +205,7 @@ async function authorCandidate(
   if (!verified) return { verified: false, note: note ?? 'verification failed' };
 
   try {
+    // Flow name comes from the authored GoldenPath, intentionally decoupled from candidate.name.
     await addFlow(app.id, flow, 'confirmed', { verified: true, source: 'mapped' });
   } catch (e) {
     if ((e as { code?: string }).code !== '23505') throw e; // duplicate name → already watched, treat as authored
@@ -218,23 +219,31 @@ export async function cmdJourneysSelect(appName: string, ids: string[], opts: Se
   const app = await requireApp(appName);
   const client = opts.client ?? new OpenRouterClient();
   const authored = await countAuthoredCandidates(app.id);
-  if (authored + ids.length > QUOTA) {
-    throw new Error(`Quota is ${QUOTA} deep flows; you have ${authored} and tried to add ${ids.length}. Pick fewer.`);
-  }
-
   const lines: string[] = [];
+
+  // Resolve first so the quota counts only ids that will actually create a flow
+  // (already-authored and unknown ids never add one).
+  const toAuthor: CandidateRecord[] = [];
   for (const id of ids) {
     const candidate = await getCandidate(app.id, id);
     if (!candidate) { lines.push(`✗ ${id} — no such candidate`); continue; }
     if (candidate.status === 'authored') { lines.push(`• ${candidate.name} — already watched, skipping`); continue; }
-    await setCandidateStatus(app.id, id, 'selected');
+    toAuthor.push(candidate);
+  }
+
+  if (authored + toAuthor.length > QUOTA) {
+    throw new Error(`Quota is ${QUOTA} deep flows; you have ${authored} and tried to add ${toAuthor.length}. Pick fewer.`);
+  }
+
+  for (const candidate of toAuthor) {
+    await setCandidateStatus(app.id, candidate.id, 'selected');
     const res = await authorCandidate(app, candidate, client, opts);
     if (res.verified) {
-      await setCandidateStatus(app.id, id, 'authored');
+      await setCandidateStatus(app.id, candidate.id, 'authored');
       lines.push(`✅ ${candidate.name} — built & now watched`);
     } else {
-      await setCandidateStatus(app.id, id, 'needs_info', res.note ?? undefined);
-      lines.push(`⚠ ${candidate.name} — needs info (${res.note}). Add details, then: vigil journeys:author ${appName} ${id}`);
+      await setCandidateStatus(app.id, candidate.id, 'needs_info', res.note ?? undefined);
+      lines.push(`⚠ ${candidate.name} — needs info (${res.note}). Add details, then: vigil journeys:author ${appName} ${candidate.id}`);
     }
   }
   for (const l of lines) console.log(l);

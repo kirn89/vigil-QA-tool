@@ -42,9 +42,14 @@ export async function listCandidates(appId: string): Promise<CandidateRecord[]> 
 }
 
 export async function getCandidate(appId: string, id: string): Promise<CandidateRecord | null> {
-  const { rows } = await getPool().query<Row>(
-    `select ${COLS} from journey_candidates where app_id = $1 and id = $2`, [appId, id]);
-  return rows[0] ? mapRow(rows[0]) : null;
+  try {
+    const { rows } = await getPool().query<Row>(
+      `select ${COLS} from journey_candidates where app_id = $1 and id = $2`, [appId, id]);
+    return rows[0] ? mapRow(rows[0]) : null;
+  } catch (e) {
+    if ((e as { code?: string }).code === '22P02') return null; // malformed uuid → treat as not found
+    throw e;
+  }
 }
 
 /** Set status; when `hint` is provided it overwrites feasibility_hint (used to

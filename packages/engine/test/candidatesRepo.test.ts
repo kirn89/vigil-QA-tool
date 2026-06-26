@@ -44,6 +44,10 @@ describe('candidatesRepo', () => {
     expect(await getCandidate(appId, '00000000-0000-0000-0000-000000000000')).toBeNull();
   });
 
+  it('getCandidate returns null for a malformed (non-UUID) id instead of throwing', async () => {
+    expect(await getCandidate(appId, 'not-a-uuid')).toBeNull();
+  });
+
   it('countAuthoredCandidates counts only authored', async () => {
     await upsertCandidates(appId, [
       { name: 'A', entryUrl: 'http://x.test/a', recommended: false },

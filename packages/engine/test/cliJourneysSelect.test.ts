@@ -80,6 +80,21 @@ describe('cmdJourneysSelect', () => {
     expect((await listCandidates(id))[0]!.status).toBe('authored');
   });
 
+  it('does not count already-authored ids against the quota on re-run', async () => {
+    await cmdAppAdd({ name: 'demo', url });
+    const id = await appId();
+    const many = Array.from({ length: 8 }, (_, i) => ({ name: `j${i}`, entryUrl: `${url}/p${i}`, recommended: false }));
+    await upsertCandidates(id, many);
+    const all = await listCandidates(id);
+    for (const c of all) await setCandidateStatus(id, c.id, 'authored');
+    const alreadyAuthoredId = all[0]!.id;
+
+    // Before the fix: authored(8) + ids.length(1) = 9 > QUOTA(8) → would throw.
+    // After the fix: the id is skipped before quota check so toAuthor.length = 0, no throw.
+    const { lines } = await cmdJourneysSelect('demo', [alreadyAuthoredId], { client: new FakeLLMClient([]) });
+    expect(lines.join('\n')).toContain('already watched');
+  });
+
   it('rejects selections that exceed the quota before authoring', async () => {
     await cmdAppAdd({ name: 'demo', url });
     const id = await appId();
