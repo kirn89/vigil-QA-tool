@@ -8,14 +8,16 @@ export function FlowReport({ flow }: { flow: FlowReportVM }) {
         <span className="font-medium">{flow.name}</span>
         <VerdictBadge verdict={flow.verdict} />
       </div>
-      {flow.verdict === 'broken' && (
+      {flow.verdict === 'broken' && (flow.failedStepId || flow.shots.length > 0) && (
         <div className="mt-3">
           {flow.failedStepId && <p className="text-sm text-neutral-600">Failed at step {flow.failedStepId}</p>}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {flow.shots.map((src, i) => (
-              <img key={i} src={src} alt={`step screenshot ${i + 1}`} className="h-32 rounded border border-neutral-200" />
-            ))}
-          </div>
+          {flow.shots.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {flow.shots.map((src, i) => (
+                <img key={i} src={src} alt={`step screenshot ${i + 1}`} className="h-32 rounded border border-neutral-200" />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
