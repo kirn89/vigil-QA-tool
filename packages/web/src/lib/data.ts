@@ -5,7 +5,7 @@ import { signedUrlFor } from './screenshots.js';
 
 type V = 'pass' | 'broken' | 'unsure';
 export interface AppSummary { id: string; name: string; worst: V | null; lastChecked: string | null }
-export interface FlowReportVM { name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
+export interface FlowReportVM { id: string; name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
 export interface FindingVM { kind: FindingKind; pageUrl: string; evidence: string }
 export interface AppReportVM { app: { id: string; name: string }; flows: FlowReportVM[]; findings: FindingVM[] }
 
@@ -60,6 +60,7 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
       shots = signed.filter((u): u is string => !!u);
     }
     flowVMs.push({
+      id: f.id,
       name: f.name,
       verdict: (run?.verdict as V | undefined) ?? null,
       failedStepId: run?.failed_step_id ?? null,
