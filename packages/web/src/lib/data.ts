@@ -4,6 +4,13 @@ import { createServiceClient } from './supabase/service.js';
 import { signedUrlFor } from './screenshots.js';
 
 type V = 'pass' | 'broken' | 'unsure';
+
+export interface FlowDetailVM {
+  flow: { id: string; name: string };
+  appId: string;
+  runs: { verdict: V; failedStepId: string | null; at: string }[];
+  steps: { id: string; kind: string; detail: string }[];
+}
 export interface AppSummary { id: string; name: string; worst: V | null; lastChecked: string | null }
 export interface FlowReportVM { id: string; name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
 export interface FindingVM { kind: FindingKind; pageUrl: string; evidence: string }
@@ -77,5 +84,26 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
     app: { id: app.id, name: app.name },
     flows: flowVMs,
     findings: (findings ?? []).map((r) => ({ kind: r.kind as FindingKind, pageUrl: r.page_url, evidence: r.evidence })),
+  };
+}
+
+export async function getFlowDetail(appId: string, flowId: string): Promise<FlowDetailVM | null> {
+  const sb = await createClient();
+  const { data: flow } = await sb.from('flows').select('id,name,golden_path').eq('id', flowId).eq('app_id', appId).maybeSingle();
+  if (!flow) return null;
+  const { data: runs } = await sb.from('runs')
+    .select('verdict,failed_step_id,created_at').eq('flow_id', flowId)
+    .order('created_at', { ascending: false }).limit(20);
+  const gp = flow.golden_path as { steps?: { id: string; action: Record<string, unknown> }[] } | null;
+  const steps = (gp?.steps ?? []).map((s) => ({
+    id: s.id,
+    kind: String(s.action.kind ?? ''),
+    detail: String(s.action.path ?? s.action.selector ?? s.action.pattern ?? s.action.text ?? ''),
+  }));
+  return {
+    flow: { id: flow.id, name: flow.name },
+    appId,
+    runs: (runs ?? []).map((r) => ({ verdict: r.verdict as V, failedStepId: r.failed_step_id ?? null, at: r.created_at })),
+    steps,
   };
 }
