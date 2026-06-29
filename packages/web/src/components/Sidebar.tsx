@@ -17,7 +17,15 @@ export function Sidebar({ apps }: { apps: { id: string; name: string }[] }) {
       <span className="px-3 py-2 text-sm font-medium text-brand">Vigil</span>
       {item('/', 'Overview', 'ti-layout-dashboard', pathname === '/')}
       <p className="px-3 pt-4 pb-1 text-xs text-ink-faint">Apps</p>
-      {apps.map((a) => item(`/apps/${a.id}`, a.name, 'ti-app-window', pathname.startsWith(`/apps/${a.id}`)))}
+      {apps.map((a) => {
+        const active = pathname.startsWith(`/apps/${a.id}`);
+        return (
+          <Link key={a.id} href={`/apps/${a.id}`} aria-current={active ? 'page' : undefined}
+            className={`${itemBase} ${active ? 'bg-surface-2 text-ink font-medium' : 'text-ink-soft hover:bg-surface-2'}`}>
+            <i className="ti ti-app-window text-lg" aria-hidden="true" />{a.name}
+          </Link>
+        );
+      })}
       <div className="mt-auto">{item('/settings', 'Settings', 'ti-settings', pathname === '/settings')}</div>
     </nav>
   );
