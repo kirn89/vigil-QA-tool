@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { listApps } from '../lib/data.js';
-import { VerdictBadge } from '../components/VerdictBadge.js';
+import { listApps } from '../../lib/data.js';
+import { VerdictBadge } from '../../components/VerdictBadge.js';
 
 export default async function HomePage() {
   const apps = await listApps();

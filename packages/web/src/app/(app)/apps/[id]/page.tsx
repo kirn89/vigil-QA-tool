@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
-import { getAppReport } from '../../../lib/data.js';
-import { FlowReport } from '../../../components/FlowReport.js';
-import { FindingsList } from '../../../components/FindingsList.js';
+import { getAppReport } from '../../../../lib/data.js';
+import { FlowReport } from '../../../../components/FlowReport.js';
+import { FindingsList } from '../../../../components/FindingsList.js';
 
 export default async function AppReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
