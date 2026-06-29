@@ -1,26 +1,23 @@
-import Link from 'next/link';
 import { listApps } from '../../lib/data.js';
-import { VerdictBadge } from '../../components/VerdictBadge.js';
+import { AppCard } from '../../components/AppCard.js';
+import { EmptyState } from '../../components/EmptyState.js';
 
-export default async function HomePage() {
+export default async function OverviewPage() {
   const apps = await listApps();
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
-      <h1 className="text-xl font-semibold">Your apps</h1>
+    <div className="mx-auto max-w-4xl px-8 py-10">
+      <h1 className="text-2xl font-medium">Your apps</h1>
       {apps.length === 0 ? (
-        <p className="mt-4 text-sm text-neutral-600">No apps yet.</p>
+        <div className="mt-8">
+          <EmptyState icon="ti-apps" title="No apps yet — connect your first one to start watching it.">
+            <a href="/connect" className="rounded-lg bg-brand px-4 py-2 text-sm text-white hover:bg-brand-hover">Connect an app</a>
+          </EmptyState>
+        </div>
       ) : (
-        <ul className="mt-6 space-y-2">
-          {apps.map((a) => (
-            <li key={a.id}>
-              <Link href={`/apps/${a.id}`} className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white p-4 hover:bg-neutral-50">
-                <span className="font-medium">{a.name}</span>
-                <VerdictBadge verdict={a.worst} />
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {apps.map((a) => <AppCard key={a.id} app={a} />)}
+        </div>
       )}
-    </main>
+    </div>
   );
 }

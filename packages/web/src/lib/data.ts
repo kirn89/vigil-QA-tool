@@ -4,7 +4,7 @@ import { createServiceClient } from './supabase/service.js';
 import { signedUrlFor } from './screenshots.js';
 
 type V = 'pass' | 'broken' | 'unsure';
-export interface AppSummary { id: string; name: string; worst: V | null }
+export interface AppSummary { id: string; name: string; worst: V | null; lastChecked: string | null }
 export interface FlowReportVM { name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
 export interface FindingVM { kind: FindingKind; pageUrl: string; evidence: string }
 export interface AppReportVM { app: { id: string; name: string }; flows: FlowReportVM[]; findings: FindingVM[] }
@@ -24,11 +24,13 @@ export async function listApps(): Promise<AppSummary[]> {
   for (const a of apps ?? []) {
     const { data: flows } = await sb.from('flows').select('id').eq('app_id', a.id).eq('status', 'confirmed');
     const verdicts: (V | null)[] = [];
+    let lastChecked: string | null = null;
     for (const f of flows ?? []) {
-      const { data: run } = await sb.from('runs').select('verdict').eq('flow_id', f.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: run } = await sb.from('runs').select('verdict,created_at').eq('flow_id', f.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
       verdicts.push((run?.verdict as V | undefined) ?? null);
+      if (run?.created_at && (!lastChecked || run.created_at > lastChecked)) lastChecked = run.created_at;
     }
-    out.push({ id: a.id, name: a.name, worst: worstOf(verdicts) });
+    out.push({ id: a.id, name: a.name, worst: worstOf(verdicts), lastChecked });
   }
   return out;
 }
