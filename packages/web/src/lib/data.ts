@@ -4,8 +4,15 @@ import { createServiceClient } from './supabase/service.js';
 import { signedUrlFor } from './screenshots.js';
 
 type V = 'pass' | 'broken' | 'unsure';
-export interface AppSummary { id: string; name: string; worst: V | null }
-export interface FlowReportVM { name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
+
+export interface FlowDetailVM {
+  flow: { id: string; name: string };
+  appId: string;
+  runs: { verdict: V; failedStepId: string | null; at: string }[];
+  steps: { id: string; kind: string; detail: string }[];
+}
+export interface AppSummary { id: string; name: string; worst: V | null; lastChecked: string | null }
+export interface FlowReportVM { id: string; name: string; verdict: V | null; failedStepId: string | null; at: string | null; shots: string[] }
 export interface FindingVM { kind: FindingKind; pageUrl: string; evidence: string }
 export interface AppReportVM { app: { id: string; name: string }; flows: FlowReportVM[]; findings: FindingVM[] }
 
@@ -24,11 +31,13 @@ export async function listApps(): Promise<AppSummary[]> {
   for (const a of apps ?? []) {
     const { data: flows } = await sb.from('flows').select('id').eq('app_id', a.id).eq('status', 'confirmed');
     const verdicts: (V | null)[] = [];
+    let lastChecked: string | null = null;
     for (const f of flows ?? []) {
-      const { data: run } = await sb.from('runs').select('verdict').eq('flow_id', f.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: run } = await sb.from('runs').select('verdict,created_at').eq('flow_id', f.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
       verdicts.push((run?.verdict as V | undefined) ?? null);
+      if (run?.created_at && (!lastChecked || run.created_at > lastChecked)) lastChecked = run.created_at;
     }
-    out.push({ id: a.id, name: a.name, worst: worstOf(verdicts) });
+    out.push({ id: a.id, name: a.name, worst: worstOf(verdicts), lastChecked });
   }
   return out;
 }
@@ -58,6 +67,7 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
       shots = signed.filter((u): u is string => !!u);
     }
     flowVMs.push({
+      id: f.id,
       name: f.name,
       verdict: (run?.verdict as V | undefined) ?? null,
       failedStepId: run?.failed_step_id ?? null,
@@ -74,5 +84,26 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
     app: { id: app.id, name: app.name },
     flows: flowVMs,
     findings: (findings ?? []).map((r) => ({ kind: r.kind as FindingKind, pageUrl: r.page_url, evidence: r.evidence })),
+  };
+}
+
+export async function getFlowDetail(appId: string, flowId: string): Promise<FlowDetailVM | null> {
+  const sb = await createClient();
+  const { data: flow } = await sb.from('flows').select('id,name,golden_path').eq('id', flowId).eq('app_id', appId).maybeSingle();
+  if (!flow) return null;
+  const { data: runs } = await sb.from('runs')
+    .select('verdict,failed_step_id,created_at').eq('flow_id', flowId)
+    .order('created_at', { ascending: false }).limit(20);
+  const gp = flow.golden_path as { steps?: { id: string; action: Record<string, unknown> }[] } | null;
+  const steps = (gp?.steps ?? []).map((s) => ({
+    id: s.id,
+    kind: String(s.action.kind ?? ''),
+    detail: String(s.action.path ?? s.action.selector ?? s.action.pattern ?? s.action.text ?? ''),
+  }));
+  return {
+    flow: { id: flow.id, name: flow.name },
+    appId,
+    runs: (runs ?? []).map((r) => ({ verdict: r.verdict as V, failedStepId: r.failed_step_id ?? null, at: r.created_at })),
+    steps,
   };
 }
