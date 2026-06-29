@@ -9,6 +9,6 @@ describe('VerdictBadge', () => {
     rerender(<VerdictBadge verdict="unsure" />);
     const el = screen.getByText('Needs a look');
     expect(el.className).not.toMatch(/red/); // unsure must not use alarm (red) styling
-    expect(el.className).toMatch(/amber/);   // unsure uses calm amber
+    expect(el.className).toMatch(/warn/);    // unsure uses calm amber (warn token)
   });
 });
