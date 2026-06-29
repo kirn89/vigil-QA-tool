@@ -11,6 +11,7 @@ describe('AppCard', () => {
   });
   it('shows not-checked-yet when never run', () => {
     render(<AppCard app={{ id: 'a2', name: 'demo', worst: null, lastChecked: null }} />);
-    expect(screen.getByText('Not checked yet')).toBeTruthy();
+    expect(screen.getAllByText('Not checked yet').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Last checked/)).toBeNull();
   });
 });

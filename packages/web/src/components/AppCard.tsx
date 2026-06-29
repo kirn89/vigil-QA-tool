@@ -11,7 +11,9 @@ export function AppCard({ app }: { app: AppSummary }) {
         <span className="text-base font-medium">{app.name}</span>
         <VerdictBadge verdict={app.worst} />
       </div>
-      <span className="text-xs text-ink-faint">Last checked {relativeTime(app.lastChecked).toLowerCase()}</span>
+      <span className="text-xs text-ink-faint">
+        {app.lastChecked ? `Last checked ${relativeTime(app.lastChecked).toLowerCase()}` : relativeTime(null)}
+      </span>
     </Link>
   );
 }
