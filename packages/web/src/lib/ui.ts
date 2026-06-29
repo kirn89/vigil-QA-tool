@@ -15,11 +15,11 @@ export function statusStyles(verdict: DisplayVerdict): { label: string; pill: st
 export function relativeTime(iso: string | null): string {
   if (!iso) return 'Not checked yet';
   const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.round(diff / 60_000);
+  const mins = Math.floor(diff / 60_000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-  const hrs = Math.round(mins / 60);
+  const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
-  const days = Math.round(hrs / 24);
+  const days = Math.floor(hrs / 24);
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }

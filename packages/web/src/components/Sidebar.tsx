@@ -26,7 +26,12 @@ export function Sidebar({ apps }: { apps: { id: string; name: string }[] }) {
           </Link>
         );
       })}
-      <div className="mt-auto">{item('/settings', 'Settings', 'ti-settings', pathname === '/settings')}</div>
+      <div className="mt-auto">
+        <span className={`${itemBase} text-ink-faint cursor-default`}>
+          <i className="ti ti-settings text-lg" aria-hidden="true" />Settings
+          <span className="ml-auto text-xs text-ink-faint rounded px-1 bg-surface-2">soon</span>
+        </span>
+      </div>
     </nav>
   );
 }
