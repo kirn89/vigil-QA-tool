@@ -23,7 +23,13 @@ export async function runWorkerOnce(deps: WorkerDeps): Promise<'idle' | 'done' |
 export async function runWorkerLoop(deps: WorkerDeps, opts: { pollMs?: number; signal?: AbortSignal } = {}): Promise<void> {
   const pollMs = opts.pollMs ?? 5_000;
   while (!opts.signal?.aborted) {
-    const result = await runWorkerOnce(deps);
+    let result: 'idle' | 'done' | 'failed';
+    try {
+      result = await runWorkerOnce(deps);
+    } catch (e) {
+      console.error('worker iteration error:', e instanceof Error ? e.message : String(e));
+      result = 'idle';
+    }
     if (result === 'idle') await new Promise((r) => setTimeout(r, pollMs));
   }
 }
