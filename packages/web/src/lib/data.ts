@@ -87,6 +87,14 @@ export async function getAppReport(appId: string): Promise<AppReportVM | null> {
   };
 }
 
+export async function latestJob(appId: string): Promise<{ id: string; status: 'queued'|'running'|'done'|'failed'; environment: 'production'|'preview' } | null> {
+  const sb = await createClient();
+  const { data } = await sb.from('jobs')
+    .select('id,status,environment').eq('app_id', appId)
+    .order('requested_at', { ascending: false }).limit(1).maybeSingle();
+  return data ? { id: data.id, status: data.status, environment: data.environment } : null;
+}
+
 export async function getFlowDetail(appId: string, flowId: string): Promise<FlowDetailVM | null> {
   const sb = await createClient();
   const { data: flow } = await sb.from('flows').select('id,name,golden_path').eq('id', flowId).eq('app_id', appId).maybeSingle();

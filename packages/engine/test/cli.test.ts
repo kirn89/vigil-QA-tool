@@ -74,6 +74,14 @@ describe('vigil CLI', () => {
     expect(lines.join('\n')).toContain('/gone');
   });
 
+  it('cmdSweep targets the preview URL when environment is preview', async () => {
+    const sweep = vi.spyOn(crawler, 'sweepSite').mockResolvedValue({ pages: [], findings: [] });
+    await cmdAppAdd({ name: 'prevapp', url: 'https://prod.test', previewUrl: 'https://preview.test' });
+    await cmdSweep('prevapp', { environment: 'preview' });
+    expect(sweep).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: 'https://preview.test' }));
+    sweep.mockRestore();
+  });
+
   it('refuses deep nav-discovery for an unsafe-listed app (settlenepal)', async () => {
     // app named "settlenepal" must never have nav-discovery enabled, even with --deep
     await cmdAppAdd({ name: 'settlenepal', url: 'http://127.0.0.1:4999', loginEmail: 'x@y.z', loginPassword: 'p' });

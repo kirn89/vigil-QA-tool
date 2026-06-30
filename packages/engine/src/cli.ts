@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureUser, createApp, getAppByName, listAllApps, type AppRecord } from './db/appsRepo.js';
+import { ensureUser, createApp, getAppByName, listAllApps, getAppById, type AppRecord } from './db/appsRepo.js';
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
 import { goldenPathSchema } from './flows/goldenPath.js';
 import { MapSession } from './map/browserTools.js';
@@ -17,6 +17,8 @@ import { screenshotStoreFromEnv } from './replay/screenshotStore.js';
 import { runWithRetries } from './verdict/runWithRetries.js';
 import { sweepSite } from './sweep/crawler.js';
 import { closePool } from './db/pool.js';
+import { claimNextJob, finishJob } from './db/jobsRepo.js';
+import { runWorkerLoop } from './worker.js';
 import { classifyJourneys } from './journeys/classify.js';
 import {
   upsertCandidates, listCandidates, getCandidate, setCandidateStatus, countAuthoredCandidates,
@@ -132,8 +134,10 @@ export async function cmdCheck(appName: string, opts: CheckOptions = {}): Promis
   return { exitCode: anyBroken ? 1 : 0, lines };
 }
 
-export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): Promise<void> {
+export async function cmdSweep(appName: string, opts: { deep?: boolean; environment?: 'production' | 'preview' } = {}): Promise<void> {
   const app = await requireApp(appName);
+  const baseUrl = opts.environment === 'preview' ? app.previewUrl : app.productionUrl;
+  if (!baseUrl) throw new Error(`App "${appName}" has no ${opts.environment === 'preview' ? 'preview' : 'production'} URL`);
   const flows = await listConfirmedFlows(app.id);
   const loginFlow = flows.find((f) => f.goldenPath.name.toLowerCase() === 'login')?.goldenPath;
   let navDiscovery = opts.deep ?? false;
@@ -142,11 +146,33 @@ export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): 
     navDiscovery = false;
   }
   const result = await sweepSite({
-    baseUrl: app.productionUrl, maxPages: 200,
+    baseUrl, maxPages: 200,
     loginFlow, credentials: app.credentials ?? undefined, navDiscovery,
   });
   await recordSweep(app.id, result);
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
+}
+
+export interface RunAppDeps {
+  check?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
+  sweep?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
+}
+
+/** The single full test (check + sweep) shared by nightly and the on-demand worker.
+ *  Skips the check when the app has no confirmed flows yet, but always sweeps. Runs
+ *  the two lanes INDEPENDENTLY — a check failure does not skip the sweep — then
+ *  re-throws if either lane failed, so the worker can mark the job failed and
+ *  nightly can log it (preserving nightly's per-lane resilience). */
+export async function runAppFull(appName: string, environment: 'production' | 'preview' = 'production', deps: RunAppDeps = {}): Promise<void> {
+  const check = deps.check ?? ((n, env) => cmdCheck(n, { preview: env === 'preview' }));
+  const sweep = deps.sweep ?? ((n, env) => cmdSweep(n, { environment: env }));
+  const flowCount = (await listConfirmedFlows((await requireApp(appName)).id)).length;
+  const errors: unknown[] = [];
+  if (flowCount > 0) {
+    try { await check(appName, environment); } catch (e) { errors.push(e); }
+  }
+  try { await sweep(appName, environment); } catch (e) { errors.push(e); }
+  if (errors.length > 0) throw errors[0];
 }
 
 export interface JourneysCliOptions { client?: LLMClient; }
@@ -325,8 +351,7 @@ export async function cmdPruneScreenshots(opts: { days?: number; baseDir?: strin
 /** Injectable so the orchestration is testable without a browser/DB. */
 export interface NightlyDeps {
   listApps: () => Promise<Array<{ name: string }>>;
-  check: (name: string) => Promise<unknown>;
-  sweep: (name: string) => Promise<unknown>;
+  runApp: (name: string) => Promise<unknown>;
   prune: () => Promise<unknown>;
 }
 
@@ -335,19 +360,34 @@ export interface NightlyDeps {
  *  broken app never aborts the rest; failures are logged, not swallowed. */
 export async function cmdNightly(deps: Partial<NightlyDeps> = {}): Promise<void> {
   const listApps = deps.listApps ?? listAllApps;
-  const check = deps.check ?? ((name: string) => cmdCheck(name));
-  const sweep = deps.sweep ?? ((name: string) => cmdSweep(name));
+  const runApp = deps.runApp ?? ((name: string) => runAppFull(name, 'production'));
   const prune = deps.prune ?? (() => cmdPruneScreenshots({}));
-  const fail = (lane: string, name: string, e: unknown) =>
-    console.error(`nightly ${lane} failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
+  const fail = (name: string, e: unknown) =>
+    console.error(`nightly run failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
 
   const apps = await listApps();
   console.log(`Nightly run: ${apps.length} app(s)`);
   for (const app of apps) {
-    try { await check(app.name); } catch (e) { fail('check', app.name, e); }
-    try { await sweep(app.name); } catch (e) { fail('sweep', app.name, e); }
+    try { await runApp(app.name); } catch (e) { fail(app.name, e); }
   }
   await prune();
+}
+
+/** Long-running worker: claims check_now jobs and runs the full test for each. */
+export async function cmdWorker(opts: { pollMs?: number } = {}): Promise<void> {
+  const controller = new AbortController();
+  process.on('SIGINT', () => controller.abort());
+  process.on('SIGTERM', () => controller.abort());
+  console.log('vigil worker started; polling for jobs…');
+  await runWorkerLoop({
+    claim: () => claimNextJob(),
+    finish: (id, ok, error) => finishJob(id, ok, error),
+    run: async (appId, environment) => {
+      const app = await getAppById(appId);
+      if (!app) throw new Error(`app ${appId} not found`);
+      await runAppFull(app.name, environment);
+    },
+  }, { pollMs: opts.pollMs, signal: controller.signal });
 }
 
 // ---- commander wiring (only runs when invoked as a script) ----
@@ -395,6 +435,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   program.command('nightly')
     .description('check + sweep every app, then prune old screenshots (for the cron)')
     .action(async () => { await cmdNightly(); });
+  program.command('worker')
+    .description('process queued check_now jobs (long-running)')
+    .option('--poll <ms>', 'poll interval in ms', '5000')
+    .action(async (o) => { await cmdWorker({ pollMs: Number(o.poll) }); });
   program.hook('postAction', async () => { await closePool(); });
   program.exitOverride();
   program.parseAsync().catch((e: unknown) => {

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
-import { getAppReport } from '../../../../lib/data.js';
+import { getAppReport, latestJob } from '../../../../lib/data.js';
+import { createClient } from '../../../../lib/supabase/server.js';
 import { FlowRow } from '../../../../components/FlowRow.js';
 import { FindingItem } from '../../../../components/FindingItem.js';
 import { CheckNowButton } from '../../../../components/CheckNowButton.js';
@@ -8,11 +9,16 @@ export default async function AppReportPage({ params }: { params: Promise<{ id: 
   const { id } = await params;
   const report = await getAppReport(id);
   if (!report) notFound();
+
+  const job = await latestJob(id);
+  const sb = await createClient();
+  const { data: appRow } = await sb.from('apps').select('preview_url').eq('id', id).maybeSingle();
+  const hasPreview = !!appRow?.preview_url;
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-medium">{report.app.name}</h1>
-        <CheckNowButton />
+        <CheckNowButton appId={report.app.id} hasPreview={hasPreview} initialStatus={job?.status ?? null} />
       </div>
 
       <h2 className="mt-8 text-sm font-medium text-ink-soft">Watched flows</h2>

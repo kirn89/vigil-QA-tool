@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FlowRow } from '../src/components/FlowRow.js';
 import { FindingItem } from '../src/components/FindingItem.js';
 import { CheckNowButton } from '../src/components/CheckNowButton.js';
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 describe('FlowRow', () => {
   it('shows failed step + screenshots only for broken', () => {
@@ -23,9 +25,9 @@ describe('FindingItem', () => {
 });
 
 describe('CheckNowButton', () => {
-  it('renders a disabled coming-soon control', () => {
-    render(<CheckNowButton />);
+  it('renders an enabled live control', () => {
+    render(<CheckNowButton appId="a1" hasPreview={false} initialStatus={null} />);
     const btn = screen.getByRole('button', { name: /check now/i });
-    expect(btn.hasAttribute('disabled')).toBe(true);
+    expect(btn.hasAttribute('disabled')).toBe(false);
   });
 });
