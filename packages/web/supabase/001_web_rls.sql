@@ -43,3 +43,13 @@ create policy web_sweep_findings_select on sweep_findings for select to authenti
 drop policy if exists web_journey_candidates_select on journey_candidates;
 create policy web_journey_candidates_select on journey_candidates for select to authenticated
   using (app_id in (select a.id from apps a join users u on u.id = a.user_id where u.auth_id = auth.uid()));
+
+alter table jobs enable row level security;
+
+drop policy if exists web_jobs_select on jobs;
+create policy web_jobs_select on jobs for select to authenticated
+  using (app_id in (select a.id from apps a join users u on u.id = a.user_id where u.auth_id = auth.uid()));
+
+drop policy if exists web_jobs_insert on jobs;
+create policy web_jobs_insert on jobs for insert to authenticated
+  with check (type = 'check_now' and app_id in (select a.id from apps a join users u on u.id = a.user_id where u.auth_id = auth.uid()));
