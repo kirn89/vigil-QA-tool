@@ -151,6 +151,28 @@ export async function cmdSweep(appName: string, opts: { deep?: boolean; environm
   console.log(`Swept ${result.pages.length} pages, ${result.findings.length} raw findings (confirmation needs 2 consecutive sweeps)`);
 }
 
+export interface RunAppDeps {
+  check?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
+  sweep?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
+}
+
+/** The single full test (check + sweep) shared by nightly and the on-demand worker.
+ *  Skips the check when the app has no confirmed flows yet, but always sweeps. Runs
+ *  the two lanes INDEPENDENTLY — a check failure does not skip the sweep — then
+ *  re-throws if either lane failed, so the worker can mark the job failed and
+ *  nightly can log it (preserving nightly's per-lane resilience). */
+export async function runAppFull(appName: string, environment: 'production' | 'preview' = 'production', deps: RunAppDeps = {}): Promise<void> {
+  const check = deps.check ?? ((n, env) => cmdCheck(n, { preview: env === 'preview' }));
+  const sweep = deps.sweep ?? ((n, env) => cmdSweep(n, { environment: env }));
+  const flowCount = (await listConfirmedFlows((await requireApp(appName)).id)).length;
+  const errors: unknown[] = [];
+  if (flowCount > 0) {
+    try { await check(appName, environment); } catch (e) { errors.push(e); }
+  }
+  try { await sweep(appName, environment); } catch (e) { errors.push(e); }
+  if (errors.length > 0) throw errors[0];
+}
+
 export interface JourneysCliOptions { client?: LLMClient; }
 
 export async function cmdJourneys(appName: string, opts: JourneysCliOptions = {}): Promise<{ lines: string[] }> {
@@ -327,8 +349,7 @@ export async function cmdPruneScreenshots(opts: { days?: number; baseDir?: strin
 /** Injectable so the orchestration is testable without a browser/DB. */
 export interface NightlyDeps {
   listApps: () => Promise<Array<{ name: string }>>;
-  check: (name: string) => Promise<unknown>;
-  sweep: (name: string) => Promise<unknown>;
+  runApp: (name: string) => Promise<unknown>;
   prune: () => Promise<unknown>;
 }
 
@@ -337,17 +358,15 @@ export interface NightlyDeps {
  *  broken app never aborts the rest; failures are logged, not swallowed. */
 export async function cmdNightly(deps: Partial<NightlyDeps> = {}): Promise<void> {
   const listApps = deps.listApps ?? listAllApps;
-  const check = deps.check ?? ((name: string) => cmdCheck(name));
-  const sweep = deps.sweep ?? ((name: string) => cmdSweep(name));
+  const runApp = deps.runApp ?? ((name: string) => runAppFull(name, 'production'));
   const prune = deps.prune ?? (() => cmdPruneScreenshots({}));
-  const fail = (lane: string, name: string, e: unknown) =>
-    console.error(`nightly ${lane} failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
+  const fail = (name: string, e: unknown) =>
+    console.error(`nightly run failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
 
   const apps = await listApps();
   console.log(`Nightly run: ${apps.length} app(s)`);
   for (const app of apps) {
-    try { await check(app.name); } catch (e) { fail('check', app.name, e); }
-    try { await sweep(app.name); } catch (e) { fail('sweep', app.name, e); }
+    try { await runApp(app.name); } catch (e) { fail(app.name, e); }
   }
   await prune();
 }
