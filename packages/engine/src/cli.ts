@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureUser, createApp, getAppByName, listAllApps, type AppRecord } from './db/appsRepo.js';
+import { ensureUser, createApp, getAppByName, listAllApps, getAppById, type AppRecord } from './db/appsRepo.js';
 import { addFlow, listConfirmedFlows, listProposedFlows, confirmFlow, deleteProposedFlows } from './db/flowsRepo.js';
 import { goldenPathSchema } from './flows/goldenPath.js';
 import { MapSession } from './map/browserTools.js';
@@ -17,6 +17,8 @@ import { screenshotStoreFromEnv } from './replay/screenshotStore.js';
 import { runWithRetries } from './verdict/runWithRetries.js';
 import { sweepSite } from './sweep/crawler.js';
 import { closePool } from './db/pool.js';
+import { claimNextJob, finishJob } from './db/jobsRepo.js';
+import { runWorkerLoop } from './worker.js';
 import { classifyJourneys } from './journeys/classify.js';
 import {
   upsertCandidates, listCandidates, getCandidate, setCandidateStatus, countAuthoredCandidates,
@@ -371,6 +373,23 @@ export async function cmdNightly(deps: Partial<NightlyDeps> = {}): Promise<void>
   await prune();
 }
 
+/** Long-running worker: claims check_now jobs and runs the full test for each. */
+export async function cmdWorker(opts: { pollMs?: number } = {}): Promise<void> {
+  const controller = new AbortController();
+  process.on('SIGINT', () => controller.abort());
+  process.on('SIGTERM', () => controller.abort());
+  console.log('vigil worker started; polling for jobs…');
+  await runWorkerLoop({
+    claim: () => claimNextJob(),
+    finish: (id, ok, error) => finishJob(id, ok, error),
+    run: async (appId, environment) => {
+      const app = await getAppById(appId);
+      if (!app) throw new Error(`app ${appId} not found`);
+      await runAppFull(app.name, environment);
+    },
+  }, { pollMs: opts.pollMs, signal: controller.signal });
+}
+
 // ---- commander wiring (only runs when invoked as a script) ----
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const program = new Command().name('vigil');
@@ -416,6 +435,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   program.command('nightly')
     .description('check + sweep every app, then prune old screenshots (for the cron)')
     .action(async () => { await cmdNightly(); });
+  program.command('worker')
+    .description('process queued check_now jobs (long-running)')
+    .option('--poll <ms>', 'poll interval in ms', '5000')
+    .action(async (o) => { await cmdWorker({ pollMs: Number(o.poll) }); });
   program.hook('postAction', async () => { await closePool(); });
   program.exitOverride();
   program.parseAsync().catch((e: unknown) => {

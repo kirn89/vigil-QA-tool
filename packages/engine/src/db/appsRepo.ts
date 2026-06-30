@@ -48,3 +48,16 @@ export async function getAppByName(userId: string, name: string): Promise<AppRec
     credentials: r.credentials_encrypted ? decryptJson(r.credentials_encrypted) : null,
   };
 }
+
+export async function getAppById(id: string): Promise<AppRecord | null> {
+  const { rows } = await getPool().query<{ id: string; user_id: string; name: string; production_url: string; preview_url: string | null; credentials_encrypted: string | null }>(
+    `select id, user_id, name, production_url, preview_url, credentials_encrypted
+     from apps where id = $1`, [id]);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id, userId: r.user_id, name: r.name,
+    productionUrl: r.production_url, previewUrl: r.preview_url,
+    credentials: r.credentials_encrypted ? decryptJson(r.credentials_encrypted) : null,
+  };
+}
