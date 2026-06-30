@@ -132,8 +132,10 @@ export async function cmdCheck(appName: string, opts: CheckOptions = {}): Promis
   return { exitCode: anyBroken ? 1 : 0, lines };
 }
 
-export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): Promise<void> {
+export async function cmdSweep(appName: string, opts: { deep?: boolean; environment?: 'production' | 'preview' } = {}): Promise<void> {
   const app = await requireApp(appName);
+  const baseUrl = opts.environment === 'preview' ? app.previewUrl : app.productionUrl;
+  if (!baseUrl) throw new Error(`App "${appName}" has no ${opts.environment === 'preview' ? 'preview' : 'production'} URL`);
   const flows = await listConfirmedFlows(app.id);
   const loginFlow = flows.find((f) => f.goldenPath.name.toLowerCase() === 'login')?.goldenPath;
   let navDiscovery = opts.deep ?? false;
@@ -142,7 +144,7 @@ export async function cmdSweep(appName: string, opts: { deep?: boolean } = {}): 
     navDiscovery = false;
   }
   const result = await sweepSite({
-    baseUrl: app.productionUrl, maxPages: 200,
+    baseUrl, maxPages: 200,
     loginFlow, credentials: app.credentials ?? undefined, navDiscovery,
   });
   await recordSweep(app.id, result);
