@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { requestCheck, pollJob } from '../app/(app)/apps/[id]/check-now-actions.js';
 
@@ -11,19 +11,38 @@ export function CheckNowButton({ appId, hasPreview, initialStatus }: { appId: st
   const active = initialStatus === 'queued' || initialStatus === 'running';
   const [busy, setBusy] = useState(active);
   const [message, setMessage] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function start() {
-    setBusy(true); setMessage(null);
-    const res = await requestCheck(appId, env);
-    if (!res.ok) { setBusy(false); setMessage(res.reason === 'busy' ? 'A check is already running.' : 'Could not start the check.'); return; }
-    const poll = setInterval(async () => {
+  function poll() {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
       const job = await pollJob(appId);
       if (!job || job.status === 'done' || job.status === 'failed') {
-        clearInterval(poll); setBusy(false);
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        setBusy(false);
         setMessage(job?.status === 'failed' ? 'The check ran into a problem.' : null);
         router.refresh();
       }
     }, 3000);
+  }
+
+  useEffect(() => {
+    if (active) poll();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function start() {
+    setBusy(true);
+    setMessage(null);
+    const res = await requestCheck(appId, env);
+    if (!res.ok) {
+      setBusy(false);
+      setMessage(res.reason === 'busy' ? 'A check is already running.' : 'Could not start the check.');
+      return;
+    }
+    poll();
   }
 
   return (
