@@ -77,10 +77,13 @@ describe('RLS isolation', () => {
       await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: a, role: 'authenticated' })]);
       // A can insert a job for A's app
       await c.query("insert into jobs (app_id, type) values ($1,'check_now')", [appA[0].id]);
-      // A cannot insert for B's app
+      // A cannot insert for B's app — wrap in a savepoint so the blocked insert's error
+      // doesn't abort the whole transaction (Postgres aborts the tx on any statement error).
       let blocked = false;
+      await c.query('savepoint before_b');
       try { await c.query("insert into jobs (app_id, type) values ($1,'check_now')", [appB[0].id]); }
       catch { blocked = true; }
+      await c.query('rollback to savepoint before_b');
       // A sees only A's jobs
       const { rows: visible } = await c.query('select j.id, a.name from jobs j join apps a on a.id=j.app_id');
       await c.query('rollback');
