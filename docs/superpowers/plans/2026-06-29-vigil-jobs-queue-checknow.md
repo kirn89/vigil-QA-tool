@@ -313,6 +313,18 @@ describe('runAppFull', () => {
     });
     expect(calls).toEqual(['sweep:fresh:production']); // no check
   });
+
+  it('still sweeps when the check throws, then rethrows so the worker sees the failure', async () => {
+    const userId = await ensureUser(process.env.VIGIL_USER_EMAIL ?? 'founder@vigil.local');
+    const app = await createApp({ userId, name: 'broken', productionUrl: 'http://x.test', previewUrl: null, credentials: null });
+    await addFlow(app.id, flow('login'), 'confirmed', { verified: true });
+    const calls: string[] = [];
+    await expect(runAppFull('broken', 'production', {
+      check: async () => { calls.push('check'); throw new Error('check crashed'); },
+      sweep: async () => { calls.push('sweep'); },
+    })).rejects.toThrow('check crashed');
+    expect(calls).toEqual(['check', 'sweep']); // sweep ran despite the check failure
+  });
 });
 ```
 
@@ -329,37 +341,77 @@ In `packages/engine/src/cli.ts`, add `runAppFull` (place it after `cmdSweep`):
 export interface RunAppDeps {
   check?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
   sweep?: (appName: string, environment: 'production' | 'preview') => Promise<unknown>;
-  flowCount?: (appId: string) => Promise<number>;
 }
 
 /** The single full test (check + sweep) shared by nightly and the on-demand worker.
- *  Skips the check when the app has no confirmed flows yet, but always sweeps. */
+ *  Skips the check when the app has no confirmed flows yet, but always sweeps. Runs
+ *  the two lanes INDEPENDENTLY — a check failure does not skip the sweep — then
+ *  re-throws if either lane failed, so the worker can mark the job failed and
+ *  nightly can log it (preserving nightly's per-lane resilience). */
 export async function runAppFull(appName: string, environment: 'production' | 'preview' = 'production', deps: RunAppDeps = {}): Promise<void> {
-  const app = await requireApp(appName);
-  const flowCount = deps.flowCount ? await deps.flowCount(app.id) : (await listConfirmedFlows(app.id)).length;
   const check = deps.check ?? ((n, env) => cmdCheck(n, { preview: env === 'preview' }));
   const sweep = deps.sweep ?? ((n, env) => cmdSweep(n, { environment: env }));
-  if (flowCount > 0) await check(appName, environment);
-  await sweep(appName, environment);
+  const flowCount = (await listConfirmedFlows((await requireApp(appName)).id)).length;
+  const errors: unknown[] = [];
+  if (flowCount > 0) {
+    try { await check(appName, environment); } catch (e) { errors.push(e); }
+  }
+  try { await sweep(appName, environment); } catch (e) { errors.push(e); }
+  if (errors.length > 0) throw errors[0];
 }
 ```
 
-Then refactor `cmdNightly` so its per-app body calls `runAppFull` (keeping the per-app try/catch and the injectable-deps shape). Replace the apps loop in `cmdNightly` with:
+Then refactor `cmdNightly` to inject a single per-app run (`runApp`) instead of separate `check`/`sweep`, defaulting to `runAppFull`. Change `NightlyDeps` to:
 
 ```typescript
+export interface NightlyDeps {
+  listApps: () => Promise<Array<{ name: string }>>;
+  runApp: (name: string) => Promise<unknown>;
+  prune: () => Promise<unknown>;
+}
+```
+
+And rewrite `cmdNightly`'s body:
+
+```typescript
+export async function cmdNightly(deps: Partial<NightlyDeps> = {}): Promise<void> {
+  const listApps = deps.listApps ?? listAllApps;
+  const runApp = deps.runApp ?? ((name: string) => runAppFull(name, 'production'));
+  const prune = deps.prune ?? (() => cmdPruneScreenshots({}));
+  const fail = (name: string, e: unknown) =>
+    console.error(`nightly run failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
+
   const apps = await listApps();
   console.log(`Nightly run: ${apps.length} app(s)`);
   for (const app of apps) {
-    try {
-      await runAppFull(app.name, 'production', { check: (n) => check(n), sweep: (n) => sweep(n) });
-    } catch (e) {
-      fail('run', app.name, e);
-    }
+    try { await runApp(app.name); } catch (e) { fail(app.name, e); }
   }
   await prune();
+}
 ```
 
-(`check`/`sweep`/`prune`/`fail`/`listApps` are the existing `cmdNightly` locals from `NightlyDeps`; this keeps the existing `cliNightly` test working since it injects those deps. The default `check`/`sweep` in `NightlyDeps` already call `cmdCheck(name)`/`cmdSweep(name)`.)
+Remove the old `check`/`sweep` members and the old per-lane loop. `runAppFull` already runs both lanes (check + sweep) with per-lane resilience, so nightly still attempts both for every app — the resilience moves from cmdNightly's two try/catch blocks into `runAppFull`.
+
+Also update the existing `packages/engine/test/cliNightly.test.ts` to the new `runApp` injection (it currently injects `check`/`sweep`). Replace its `cmdNightly({...})` call + assertions with:
+
+```typescript
+    const ran: string[] = [];
+    let pruned = 0;
+    const errs = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await cmdNightly({
+      listApps: async () => [{ name: 'alpha' }, { name: 'beta' }, { name: 'gamma' }],
+      runApp: async (name) => { ran.push(name); if (name === 'beta') throw new Error('beta run broke'); },
+      prune: async () => { pruned++; },
+    });
+
+    expect(ran).toEqual(['alpha', 'beta', 'gamma']); // every app attempted despite beta throwing
+    expect(pruned).toBe(1);                          // prune runs once, after all apps
+    expect(errs.mock.calls.flat().join(' ')).toMatch(/beta/);
+    errs.mockRestore();
+```
+
+(Per-lane resilience — that a check failure still lets the sweep run — now lives in `runAppFull` and is covered by its own test below; the nightly test verifies the orchestration: every app run, one failure logged not fatal, prune once.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -369,8 +421,8 @@ Expected: both PASS — `runAppFull` branches correctly; nightly still processes
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/engine/src/cli.ts packages/engine/test/runAppFull.test.ts
-git commit -m "feat(engine): runAppFull shared by nightly + worker (env-aware, flow-safe)"
+git add packages/engine/src/cli.ts packages/engine/test/runAppFull.test.ts packages/engine/test/cliNightly.test.ts
+git commit -m "feat(engine): runAppFull shared by nightly + worker (env-aware, per-lane resilient)"
 ```
 
 ---
