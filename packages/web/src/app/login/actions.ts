@@ -1,15 +1,21 @@
 'use server';
+import { redirect } from 'next/navigation';
 import { createClient } from '../../lib/supabase/server.js';
-import { headers } from 'next/headers';
+import { linkUser } from '../../lib/linkUser.js';
 
-export async function sendMagicLink(_prev: unknown, formData: FormData): Promise<{ message: string }> {
+export async function signInAction(_prev: { message: string }, formData: FormData): Promise<{ message: string }> {
   const email = String(formData.get('email') ?? '').trim();
-  if (!email) return { message: 'Enter your email.' };
+  const password = String(formData.get('password') ?? '');
+  if (!email || !password) return { message: 'Enter your email and password.' };
+
   const supabase = await createClient();
-  const origin = (await headers()).get('origin') ?? '';
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: `${origin}/auth/callback` },
-  });
-  return { message: error ? `Could not send link: ${error.message}` : 'Check your email for a sign-in link.' };
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    const msg = /confirm/i.test(error.message)
+      ? 'Please confirm your email first — check your inbox.'
+      : 'Email or password is incorrect.';
+    return { message: msg };
+  }
+  if (data.user?.email) await linkUser(data.user.id, data.user.email);
+  redirect('/');
 }
