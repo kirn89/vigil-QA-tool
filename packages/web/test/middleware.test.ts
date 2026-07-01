@@ -8,4 +8,11 @@ describe('isProtectedPath', () => {
     expect(isProtectedPath('/login')).toBe(false);
     expect(isProtectedPath('/auth/callback')).toBe(false);
   });
+
+  it('treats signup and forgot-password as public too', () => {
+    expect(isProtectedPath('/signup')).toBe(false);
+    expect(isProtectedPath('/forgot-password')).toBe(false);
+    expect(isProtectedPath('/auth/reset')).toBe(false);
+    expect(isProtectedPath('/apps/1')).toBe(true);
+  });
 });

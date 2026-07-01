@@ -2,7 +2,8 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export function isProtectedPath(pathname: string): boolean {
-  return !pathname.startsWith('/login') && !pathname.startsWith('/auth');
+  const publicPrefixes = ['/login', '/signup', '/forgot-password', '/auth'];
+  return !publicPrefixes.some((p) => pathname.startsWith(p));
 }
 
 /** Refresh the session and redirect unauthenticated users away from protected pages. */
