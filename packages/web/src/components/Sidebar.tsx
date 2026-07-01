@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOutAction } from '../app/(app)/actions.js';
 
 const itemBase = 'flex items-center gap-2 rounded-lg px-3 py-2 text-sm';
 
@@ -26,11 +27,16 @@ export function Sidebar({ apps }: { apps: { id: string; name: string }[] }) {
           </Link>
         );
       })}
-      <div className="mt-auto">
-        <span className={`${itemBase} text-ink-faint cursor-default`}>
+      <div className="mt-auto flex flex-col gap-1">
+        <span className={`${itemBase} cursor-default text-ink-faint`}>
           <i className="ti ti-settings text-lg" aria-hidden="true" />Settings
-          <span className="ml-auto text-xs text-ink-faint rounded px-1 bg-surface-2">soon</span>
+          <span className="ml-auto rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px]">soon</span>
         </span>
+        <form action={signOutAction}>
+          <button type="submit" className={`${itemBase} w-full text-ink-soft hover:bg-surface-2`}>
+            <i className="ti ti-logout text-lg" aria-hidden="true" />Sign out
+          </button>
+        </form>
       </div>
     </nav>
   );
